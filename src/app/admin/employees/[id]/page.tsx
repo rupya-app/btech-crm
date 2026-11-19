@@ -20,6 +20,10 @@ import {
   ArrowRight,
   Building2,
   ExternalLink,
+  PauseCircle,
+  PlayCircle,
+  XCircle,
+  ShieldAlert,
 } from 'lucide-react';
 import {
   AdminPageContainer,
@@ -69,8 +73,34 @@ export default function AdminEmployeeDetailPage() {
   const [isAssignOpen, setIsAssignOpen] = useState(false);
   const [assignQty, setAssignQty] = useState<string>('50');
   const [assigning, setAssigning] = useState(false);
+  const [isDeactivateConfirmOpen, setIsDeactivateConfirmOpen] = useState(false);
+  const [statusLoading, setStatusLoading] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  const handleLifecycleChange = async (action: 'pause' | 'resume' | 'deactivate') => {
+    if (!data?.employee?.id) return;
+    setStatusLoading(true);
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: data.employee.id, action }),
+      });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to update status');
+
+      setNotice(json.message);
+      setIsDeactivateConfirmOpen(false);
+      await fetchProfileDetail();
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Status update failed');
+    } finally {
+      setStatusLoading(false);
+    }
+  };
 
   const fetchProfileDetail = useCallback(async () => {
     if (!employeeIdParam) return;
@@ -230,14 +260,29 @@ export default function AdminEmployeeDetailPage() {
                 {employee.employee_id}
               </span>
               <span
-                className="text-xs font-semibold rounded-full"
+                className="text-xs font-semibold rounded-full inline-flex items-center"
                 style={{
                   padding: '3px 10px',
-                  backgroundColor: employee.is_active ? '#D1FAE5' : '#FEE2E2',
-                  color: employee.is_active ? '#065F46' : '#991B1B',
+                  gap: '5px',
+                  backgroundColor:
+                    employee.account_status === 'active'
+                      ? '#D1FAE5'
+                      : employee.account_status === 'paused'
+                      ? '#FEF3C7'
+                      : '#FEE2E2',
+                  color:
+                    employee.account_status === 'active'
+                      ? '#065F46'
+                      : employee.account_status === 'paused'
+                      ? '#92400E'
+                      : '#991B1B',
                 }}
               >
-                {employee.is_active ? 'Active Representative' : 'Deactivated'}
+                {employee.account_status === 'active'
+                  ? 'Active Representative'
+                  : employee.account_status === 'paused'
+                  ? 'Paused (Portal Temporarily Locked)'
+                  : 'Deactivated Permanently (History Preserved)'}
               </span>
               <span className="text-xs text-text-muted font-medium">
                 {employee.department || 'Enterprise Sales'} • {employee.job_title || 'Sales Executive'}
@@ -270,11 +315,62 @@ export default function AdminEmployeeDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center flex-wrap shrink-0" style={{ gap: '12px' }}>
-          <Button onClick={() => setIsAssignOpen(true)}>
-            <UserPlus className="w-4 h-4" />
-            <span>Assign Leads to {employee.full_name.split(' ')[0]}</span>
-          </Button>
+        <div className="flex items-center flex-wrap shrink-0" style={{ gap: '10px' }}>
+          {employee.account_status === 'active' && (
+            <>
+              <Button onClick={() => setIsAssignOpen(true)}>
+                <UserPlus className="w-4 h-4" />
+                <span>Assign Leads to {employee.full_name.split(' ')[0]}</span>
+              </Button>
+              <Button
+                variant="outline"
+                disabled={statusLoading}
+                onClick={() => handleLifecycleChange('pause')}
+                className="text-warning border-warning/30 hover:bg-warning-bg"
+              >
+                <PauseCircle className="w-4 h-4" />
+                <span>Pause Portal</span>
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={statusLoading}
+                onClick={() => setIsDeactivateConfirmOpen(true)}
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Deactivate & Revert Leads</span>
+              </Button>
+            </>
+          )}
+
+          {employee.account_status === 'paused' && (
+            <>
+              <Button
+                variant="default"
+                disabled={statusLoading}
+                onClick={() => handleLifecycleChange('resume')}
+              >
+                <PlayCircle className="w-4 h-4" />
+                <span>Resume / Activate Portal</span>
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={statusLoading}
+                onClick={() => setIsDeactivateConfirmOpen(true)}
+              >
+                <XCircle className="w-4 h-4" />
+                <span>Deactivate Permanently</span>
+              </Button>
+            </>
+          )}
+
+          {employee.account_status === 'deactivated' && (
+            <div
+              className="rounded-xl bg-danger-bg border border-danger/30 text-danger text-xs font-semibold"
+              style={{ padding: '10px 14px' }}
+            >
+              Permanently Deactivated • {formatNumber(stats.revertedLeadsCount || 0)} Leads Reverted to Pool
+            </div>
+          )}
         </div>
       </PageCard>
 
@@ -842,7 +938,14 @@ export default function AdminEmployeeDetailPage() {
                   <LeadPriorityBadge priority={lead.priority} />
                 </DataTableCell>
                 <DataTableCell className="tabular-nums text-text-muted whitespace-nowrap">
-                  {formatDate(lead.assigned_at || lead.created_at)}
+                  <div className="flex flex-col">
+                    <span>{formatDate(lead.assigned_at || lead.created_at)}</span>
+                    {lead.is_reverted && (
+                      <span className="text-[11px] font-semibold text-danger">
+                        Reverted to Pool
+                      </span>
+                    )}
+                  </div>
                 </DataTableCell>
                 <DataTableCell align="right">
                   <Link
@@ -937,6 +1040,61 @@ export default function AdminEmployeeDetailPage() {
               </Button>
             </DialogFooter>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Permanent Deactivation Confirmation Modal */}
+      <Dialog open={isDeactivateConfirmOpen} onOpenChange={setIsDeactivateConfirmOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-danger">
+              <ShieldAlert className="w-5 h-5 text-danger" />
+              <span>Permanently Deactivate {employee.full_name}?</span>
+            </DialogTitle>
+            <DialogDescription>
+              Deactivation is permanent and cannot be undone. To temporarily block portal access instead, use <strong>Pause Portal</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div
+              className="rounded-xl bg-warning-bg border border-warning/30 text-warning text-[13px] leading-relaxed"
+              style={{ padding: '14px 16px' }}
+            >
+              <strong className="font-bold block mb-1">
+                Automatic Lead Reversion ({formatNumber(stats.totalAssigned)} Active Leads):
+              </strong>
+              All <strong>{formatNumber(stats.totalAssigned)} active leads</strong> currently assigned to {employee.full_name} will be automatically reverted back to the <strong>Unassigned Pool</strong> so they can be assigned to any other representative.
+            </div>
+
+            <div
+              className="rounded-xl bg-[#F8FAFB] border border-border text-[13px] text-text-secondary leading-relaxed"
+              style={{ padding: '14px 16px' }}
+            >
+              <strong className="text-text-primary font-bold block mb-1">
+                100% History Preserved:
+              </strong>
+              All daily work logs, calls made ({formatNumber(stats.totalCalls)}), stage markings, remarks ({formatNumber(stats.totalRemarks)}), and previously handled leads will remain preserved on this profile under the <strong>Deactivated</strong> status.
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setIsDeactivateConfirmOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              disabled={statusLoading}
+              onClick={() => handleLifecycleChange('deactivate')}
+              style={{ backgroundColor: '#C74747', color: '#FFFFFF' }}
+            >
+              {statusLoading ? 'Reverting Leads & Deactivating...' : 'Confirm Permanent Deactivation'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </AdminPageContainer>

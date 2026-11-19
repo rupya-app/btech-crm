@@ -77,20 +77,25 @@ export async function POST(request: NextRequest) {
 
       const { data: profile, error: lookupError } = await lookupClient
         .from('profiles')
-        .select('email, is_active, role')
+        .select('email, is_active, role, avatar_url')
         .eq('employee_id', identifier.trim().toUpperCase())
         .single();
 
       if (lookupError || !profile) {
         return NextResponse.json(
-          { error: `No active account found for Employee ID: ${identifier}` },
+          { error: `No account found for Employee ID: ${identifier}` },
           { status: 404 }
         );
       }
 
       if (!profile.is_active) {
+        const isPaused = profile.avatar_url === 'status:paused';
         return NextResponse.json(
-          { error: 'This account has been deactivated. Please contact your CRM administrator.' },
+          {
+            error: isPaused
+              ? 'Your sales portal access is temporarily PAUSED by the administrator. Please contact your manager to resume access.'
+              : 'This employee account has been permanently DEACTIVATED. Portal access is revoked.',
+          },
           { status: 403 }
         );
       }
@@ -127,14 +132,19 @@ export async function POST(request: NextRequest) {
     // Fetch user profile to verify role and status
     const { data: userProfile } = await supabase
       .from('profiles')
-      .select('role, is_active, must_change_password, full_name, employee_id')
+      .select('role, is_active, must_change_password, full_name, employee_id, avatar_url')
       .eq('id', authData.user.id)
       .single();
 
     if (userProfile && !userProfile.is_active) {
       await supabase.auth.signOut();
+      const isPaused = userProfile.avatar_url === 'status:paused';
       return NextResponse.json(
-        { error: 'Account has been deactivated. Access revoked.' },
+        {
+          error: isPaused
+            ? 'Your sales portal access is temporarily PAUSED by the administrator. Please contact your manager to resume access.'
+            : 'This account has been permanently DEACTIVATED. Access revoked.',
+        },
         { status: 403 }
       );
     }

@@ -1,22 +1,56 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDbClient, createAdminClient, invalidateCrmCache } from '@/lib/supabase/server';
+import {
+  getDbClient,
+  createAdminClient,
+  invalidateCrmCache,
+  fetchAllRows,
+} from '@/lib/supabase/server';
 import { generateEmployeeId } from '@/lib/utils';
+
+export type AccountStatus = 'active' | 'paused' | 'deactivated';
+
+export function resolveAccountStatus(profile: any): AccountStatus {
+  if (profile.is_active) return 'active';
+  if (profile.avatar_url === 'status:paused') return 'paused';
+  return 'deactivated';
+}
 
 export async function GET() {
   try {
     const supabase = await getDbClient();
-    const { data: employees, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('role', 'employee')
-      .order('created_at', { ascending: false });
+
+    const [{ data: employees, error }, activeAssignments] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('*')
+        .eq('role', 'employee')
+        .order('created_at', { ascending: false }),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('lead_assignments')
+          .select('employee_id')
+          .eq('is_active', true)
+          .range(from, to)
+      ),
+    ]);
 
     if (error) {
       console.error('GET /api/employees error:', error);
       return NextResponse.json({ employees: [] });
     }
 
-    return NextResponse.json({ employees: employees || [] });
+    const activeCountMap = new Map<string, number>();
+    activeAssignments.forEach((a: any) => {
+      activeCountMap.set(a.employee_id, (activeCountMap.get(a.employee_id) || 0) + 1);
+    });
+
+    const enriched = (employees || []).map((emp: any) => ({
+      ...emp,
+      account_status: resolveAccountStatus(emp),
+      active_leads_count: activeCountMap.get(emp.id) || 0,
+    }));
+
+    return NextResponse.json({ employees: enriched });
   } catch (err: any) {
     return NextResponse.json({ error: err.message, employees: [] }, { status: 500 });
   }
@@ -47,11 +81,11 @@ export async function POST(request: NextRequest) {
         full_name: fullName.trim(),
         employee_id: employeeId,
         role: 'employee',
+        account_status: 'active',
       },
     });
 
     if (authErr) {
-      // Check if user already exists in auth.users
       const { data: existingList } = await adminClient.auth.admin.listUsers();
       const found = existingList?.users?.find(
         (u: any) => u.email?.toLowerCase() === cleanEmail
@@ -82,6 +116,7 @@ export async function POST(request: NextRequest) {
       role: 'employee',
       department: department || 'Enterprise Sales',
       job_title: jobTitle || 'Sales Executive',
+      avatar_url: 'status:active',
       is_active: true,
       must_change_password: false,
     };
@@ -96,7 +131,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: profileErr.message }, { status: 400 });
     }
 
-    // 3. Create welcome notification for employee
     await adminClient.from('notifications').insert({
       user_id: userId,
       title: 'Welcome to Digital Sales CRM',
@@ -104,7 +138,6 @@ export async function POST(request: NextRequest) {
       notification_type: 'account_created',
     });
 
-    // 4. Audit log
     await adminClient.from('audit_logs').insert({
       action: 'Employee Account Created',
       entity_type: 'profile',
@@ -117,7 +150,11 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       success: true,
       message: `Employee ${fullName} created with ID ${employeeId}. Default password: ${provisionalPassword}`,
-      employee: insertedProfile,
+      employee: {
+        ...insertedProfile,
+        account_status: 'active',
+        active_leads_count: 0,
+      },
     });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
@@ -127,7 +164,17 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   try {
     const body = await request.json();
-    const { id, is_active, newPassword } = body;
+    const {
+      id,
+      action,
+      accountStatus,
+      newPassword,
+    }: {
+      id: string;
+      action?: 'pause' | 'resume' | 'deactivate' | 'reset_password';
+      accountStatus?: AccountStatus;
+      newPassword?: string;
+    } = body;
 
     if (!id) {
       return NextResponse.json({ error: 'Employee ID is required' }, { status: 400 });
@@ -135,25 +182,29 @@ export async function PATCH(request: NextRequest) {
 
     const adminClient = createAdminClient();
 
-    if (typeof is_active === 'boolean') {
-      const { data, error } = await adminClient
-        .from('profiles')
-        .update({ is_active, updated_at: new Date().toISOString() })
-        .eq('id', id)
-        .select('*')
-        .single();
+    // Fetch existing employee profile first
+    const { data: currentProfile, error: fetchErr } = await adminClient
+      .from('profiles')
+      .select('*')
+      .eq('id', id)
+      .single();
 
-      if (error) {
-        return NextResponse.json({ error: error.message }, { status: 400 });
-      }
-
-      invalidateCrmCache();
-      return NextResponse.json({ success: true, employee: data });
+    if (fetchErr || !currentProfile) {
+      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
-    if (newPassword) {
+    const currentStatus = resolveAccountStatus(currentProfile);
+
+    // Password reset
+    if (newPassword || action === 'reset_password') {
+      if (currentStatus === 'deactivated') {
+        return NextResponse.json(
+          { error: 'Cannot reset password for a permanently deactivated account.' },
+          { status: 400 }
+        );
+      }
       const { error } = await adminClient.auth.admin.updateUserById(id, {
-        password: newPassword,
+        password: newPassword || 'Password@123',
       });
       if (error) {
         return NextResponse.json({ error: error.message }, { status: 400 });
@@ -164,7 +215,198 @@ export async function PATCH(request: NextRequest) {
       });
     }
 
-    return NextResponse.json({ error: 'No update parameters provided' }, { status: 400 });
+    const targetStatus: AccountStatus | undefined =
+      accountStatus ||
+      (action === 'pause'
+        ? 'paused'
+        : action === 'resume'
+        ? 'active'
+        : action === 'deactivate'
+        ? 'deactivated'
+        : undefined);
+
+    if (!targetStatus) {
+      return NextResponse.json({ error: 'No status action specified' }, { status: 400 });
+    }
+
+    // CRITICAL RULE: Once deactivated, an account can NEVER be made active or paused again
+    if (currentStatus === 'deactivated' && targetStatus !== 'deactivated') {
+      return NextResponse.json(
+        {
+          error: `${currentProfile.full_name} (${currentProfile.employee_id}) is permanently deactivated and cannot be reactivated.`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // 1. PAUSE ACCOUNT (Temporary Portal Lock — Leads remain assigned, can be resumed later)
+    if (targetStatus === 'paused') {
+      const { data: updated, error } = await adminClient
+        .from('profiles')
+        .update({
+          is_active: false,
+          avatar_url: 'status:paused',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      await adminClient.auth.admin.updateUserById(id, {
+        user_metadata: { account_status: 'paused' },
+      });
+
+      await adminClient.from('audit_logs').insert({
+        action: 'Employee Portal Paused',
+        entity_type: 'profile',
+        entity_id: id,
+        after_data: { status: 'paused', employee_id: currentProfile.employee_id },
+      });
+
+      invalidateCrmCache();
+
+      return NextResponse.json({
+        success: true,
+        revertedLeadsCount: 0,
+        message: `${currentProfile.full_name} (${currentProfile.employee_id}) has been paused. Their portal access is temporarily locked until you resume their account.`,
+        employee: {
+          ...updated,
+          account_status: 'paused',
+        },
+      });
+    }
+
+    // 2. RESUME / ACTIVATE ACCOUNT (Only allowed from 'paused')
+    if (targetStatus === 'active') {
+      const { data: updated, error } = await adminClient
+        .from('profiles')
+        .update({
+          is_active: true,
+          avatar_url: 'status:active',
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      await adminClient.auth.admin.updateUserById(id, {
+        user_metadata: { account_status: 'active' },
+      });
+
+      await adminClient.from('audit_logs').insert({
+        action: 'Employee Portal Resumed',
+        entity_type: 'profile',
+        entity_id: id,
+        after_data: { status: 'active', employee_id: currentProfile.employee_id },
+      });
+
+      invalidateCrmCache();
+
+      return NextResponse.json({
+        success: true,
+        revertedLeadsCount: 0,
+        message: `${currentProfile.full_name} (${currentProfile.employee_id}) is now Active and can access their sales portal again.`,
+        employee: {
+          ...updated,
+          account_status: 'active',
+        },
+      });
+    }
+
+    // 3. PERMANENT DEACTIVATION:
+    // - Reverts all currently assigned leads back to the Unassigned Pool (`is_active = false, released_at = now()`)
+    // - Preserves 100% of historical assignments, activities, calls, remarks, and daily work logs
+    // - Permanently locks the account from ever being reactivated
+    if (targetStatus === 'deactivated') {
+      const activeAssigns = await fetchAllRows<any>((from, to) =>
+        adminClient
+          .from('lead_assignments')
+          .select('id, lead_id')
+          .eq('employee_id', id)
+          .eq('is_active', true)
+          .range(from, to)
+      );
+
+      const leadIdsToRevert = activeAssigns.map((a: any) => a.lead_id);
+      const nowIso = new Date().toISOString();
+
+      if (leadIdsToRevert.length > 0) {
+        const CHUNK_SIZE = 250;
+        for (let i = 0; i < leadIdsToRevert.length; i += CHUNK_SIZE) {
+          const chunk = leadIdsToRevert.slice(i, i + CHUNK_SIZE);
+          await adminClient
+            .from('lead_assignments')
+            .update({
+              is_active: false,
+              released_at: nowIso,
+            })
+            .eq('employee_id', id)
+            .eq('is_active', true)
+            .in('lead_id', chunk);
+
+          const revertActivities = chunk.map((lId: string) => ({
+            lead_id: lId,
+            employee_id: id,
+            activity_type: 'lead_reverted_to_pool',
+            description: `Lead automatically reverted to Unassigned Pool upon permanent deactivation of ${currentProfile.full_name} (${currentProfile.employee_id}).`,
+          }));
+          await adminClient.from('lead_activities').insert(revertActivities);
+        }
+      }
+
+      const { data: updated, error } = await adminClient
+        .from('profiles')
+        .update({
+          is_active: false,
+          avatar_url: 'status:deactivated',
+          updated_at: nowIso,
+        })
+        .eq('id', id)
+        .select('*')
+        .single();
+
+      if (error) {
+        return NextResponse.json({ error: error.message }, { status: 400 });
+      }
+
+      await adminClient.auth.admin.updateUserById(id, {
+        user_metadata: { account_status: 'deactivated' },
+      });
+
+      await adminClient.from('audit_logs').insert({
+        action: 'Employee Permanently Deactivated & Leads Reverted',
+        entity_type: 'profile',
+        entity_id: id,
+        after_data: {
+          status: 'deactivated',
+          employee_id: currentProfile.employee_id,
+          reverted_leads_count: leadIdsToRevert.length,
+        },
+      });
+
+      invalidateCrmCache();
+
+      return NextResponse.json({
+        success: true,
+        revertedLeadsCount: leadIdsToRevert.length,
+        message: `${currentProfile.full_name} (${currentProfile.employee_id}) has been permanently deactivated. ${leadIdsToRevert.length} assigned lead(s) have been reverted to the Unassigned Pool and are now available to assign to other representatives. Their complete work history is preserved.`,
+        employee: {
+          ...updated,
+          account_status: 'deactivated',
+          active_leads_count: 0,
+        },
+      });
+    }
+
+    return NextResponse.json({ error: 'Invalid status update' }, { status: 400 });
   } catch (err: any) {
     return NextResponse.json({ error: err.message }, { status: 500 });
   }

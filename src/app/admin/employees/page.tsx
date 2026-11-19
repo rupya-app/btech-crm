@@ -8,9 +8,12 @@ import {
   Search,
   CheckCircle2,
   XCircle,
+  PauseCircle,
+  PlayCircle,
   MoreHorizontal,
   AlertCircle,
   ExternalLink,
+  ShieldAlert,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -27,13 +30,15 @@ import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
-import { generateEmployeeId, getInitials, formatDate } from '@/lib/utils';
+import { generateEmployeeId, getInitials, formatDate, formatNumber } from '@/lib/utils';
 import {
   AdminPageContainer,
   PageHeader,
+  FilterTabs,
   DataTable,
   DataTableRow,
   DataTableCell,
@@ -49,6 +54,8 @@ interface EmployeeItem {
   department: string;
   job_title: string;
   is_active: boolean;
+  account_status?: 'active' | 'paused' | 'deactivated';
+  active_leads_count?: number;
   created_at: string;
 }
 
@@ -57,6 +64,7 @@ export default function AdminEmployeesPage() {
   const [employees, setEmployees] = useState<EmployeeItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'paused' | 'deactivated'>('all');
 
   // Create Employee Modal
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -68,6 +76,11 @@ export default function AdminEmployeesPage() {
   const [newJobTitle, setNewJobTitle] = useState('Sales Executive');
   const [generatedEmpId, setGeneratedEmpId] = useState('');
   const [creating, setCreating] = useState(false);
+
+  // Permanent Deactivation Confirmation Modal
+  const [deactivateTarget, setDeactivateTarget] = useState<EmployeeItem | null>(null);
+  const [deactivating, setDeactivating] = useState(false);
+
   const [notice, setNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
@@ -142,29 +155,67 @@ export default function AdminEmployeesPage() {
     }
   };
 
-  const toggleActiveStatus = async (emp: EmployeeItem) => {
+  const handlePauseOrResume = async (emp: EmployeeItem, targetAction: 'pause' | 'resume') => {
+    setErrorMsg(null);
+    setNotice(null);
     try {
-      const nextStatus = !emp.is_active;
       const res = await fetch('/api/employees', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: emp.id, is_active: nextStatus }),
+        body: JSON.stringify({ id: emp.id, action: targetAction }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error);
 
       setEmployees((prev) =>
         prev.map((item) =>
-          item.id === emp.id ? { ...item, is_active: nextStatus } : item
+          item.id === emp.id
+            ? {
+                ...item,
+                is_active: targetAction === 'resume',
+                account_status: targetAction === 'resume' ? 'active' : 'paused',
+              }
+            : item
         )
       );
-      setNotice(
-        `Employee ${emp.full_name} (${emp.employee_id}) ${
-          nextStatus ? 'reactivated' : 'deactivated'
-        } in database.`
-      );
+      setNotice(data.message);
     } catch (err: any) {
       setErrorMsg(err.message || 'Failed to update employee status');
+    }
+  };
+
+  const handleConfirmPermanentDeactivate = async () => {
+    if (!deactivateTarget) return;
+    setDeactivating(true);
+    setErrorMsg(null);
+    setNotice(null);
+    try {
+      const res = await fetch('/api/employees', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: deactivateTarget.id, action: 'deactivate' }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setEmployees((prev) =>
+        prev.map((item) =>
+          item.id === deactivateTarget.id
+            ? {
+                ...item,
+                is_active: false,
+                account_status: 'deactivated',
+                active_leads_count: 0,
+              }
+            : item
+        )
+      );
+      setNotice(data.message);
+      setDeactivateTarget(null);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Failed to deactivate employee');
+    } finally {
+      setDeactivating(false);
     }
   };
 
@@ -185,19 +236,34 @@ export default function AdminEmployeesPage() {
     }
   };
 
-  const filtered = employees.filter(
-    (e) =>
+  const getEmpStatus = (emp: EmployeeItem): 'active' | 'paused' | 'deactivated' => {
+    if (emp.account_status) return emp.account_status;
+    return emp.is_active ? 'active' : 'deactivated';
+  };
+
+  const counts = {
+    all: employees.length,
+    active: employees.filter((e) => getEmpStatus(e) === 'active').length,
+    paused: employees.filter((e) => getEmpStatus(e) === 'paused').length,
+    deactivated: employees.filter((e) => getEmpStatus(e) === 'deactivated').length,
+  };
+
+  const filtered = employees.filter((e) => {
+    const st = getEmpStatus(e);
+    if (statusFilter !== 'all' && st !== statusFilter) return false;
+    return (
       e.full_name?.toLowerCase().includes(search.toLowerCase()) ||
       e.employee_id?.toLowerCase().includes(search.toLowerCase()) ||
       e.email?.toLowerCase().includes(search.toLowerCase()) ||
       e.department?.toLowerCase().includes(search.toLowerCase())
-  );
+    );
+  });
 
   return (
     <AdminPageContainer>
       <PageHeader
-        title="Sales Team Directory & Credentials"
-        description="Manage sales team credentials, role permissions, unique employee IDs, and workspace access."
+        title="Sales Team Directory & Lifecycle Control"
+        description="Manage sales representative credentials, pause portal access temporarily, or permanently deactivate accounts with automatic lead reversion to the Unassigned Pool."
         actions={
           <Button onClick={openCreateModal}>
             <UserPlus className="w-4 h-4" />
@@ -218,14 +284,22 @@ export default function AdminEmployeesPage() {
         </div>
       )}
 
-      {/* Search Bar */}
-      <div
-        className="flex flex-col sm:flex-row sm:items-center justify-between bg-white rounded-2xl border border-border shadow-xs"
-        style={{ padding: '18px 22px', gap: '16px' }}
-      >
+      {/* Status Filter Tabs & Search Bar */}
+      <div className="flex flex-col lg:flex-row lg:items-center justify-between" style={{ gap: '16px' }}>
+        <FilterTabs
+          tabs={[
+            { id: 'all', label: `All Team (${counts.all})` },
+            { id: 'active', label: `Active (${counts.active})` },
+            { id: 'paused', label: `Paused (${counts.paused})` },
+            { id: 'deactivated', label: `Deactivated (${counts.deactivated})` },
+          ]}
+          activeTab={statusFilter}
+          onTabChange={(id) => setStatusFilter(id as any)}
+        />
+
         <div
-          className="flex items-center flex-1 max-w-md rounded-xl border border-border bg-[#F8FAFB] focus-within:bg-white focus-within:border-primary-500 transition-all"
-          style={{ padding: '0 14px', height: '42px', gap: '10px' }}
+          className="flex items-center flex-1 max-w-md rounded-xl border border-border bg-white focus-within:border-primary-500 transition-all shadow-xs"
+          style={{ padding: '0 14px', height: '44px', gap: '10px' }}
         >
           <Search className="w-4 h-4 text-text-muted shrink-0" />
           <input
@@ -236,143 +310,290 @@ export default function AdminEmployeesPage() {
             className="w-full h-full bg-transparent text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none"
           />
         </div>
-        <span className="text-[13px] text-text-muted font-medium">
-          Total Employees: <strong className="text-text-primary font-semibold">{employees.length}</strong>
-        </span>
       </div>
 
       {/* Employees Table */}
       <DataTable
         headers={[
           { label: 'Employee ID' },
-          { label: 'Full Name' },
+          { label: 'Full Name (Click for Daily History)' },
           { label: 'Contact' },
-          { label: 'Department & Role' },
-          { label: 'Status', align: 'center' },
+          { label: 'Active Leads', align: 'center' },
+          { label: 'Account Status', align: 'center' },
           { label: 'Joined Date' },
           { label: 'Actions', align: 'right' },
         ]}
         isEmpty={!loading && filtered.length === 0}
         emptyState={
           <span className="text-sm text-text-muted">
-            No employees found in database. Click &ldquo;Add New Employee&rdquo; to create one.
+            No employees found matching this filter.
           </span>
         }
       >
-        {filtered.map((emp) => (
-          <DataTableRow
-            key={emp.id}
-            onClick={() => router.push(`/admin/employees/${emp.id}`)}
-          >
-            <DataTableCell className="font-bold text-primary-700 tabular-nums">
-              <Link
-                href={`/admin/employees/${emp.id}`}
-                onClick={(e) => e.stopPropagation()}
-                className="hover:underline"
-              >
-                {emp.employee_id}
-              </Link>
-            </DataTableCell>
-            <DataTableCell>
-              <div className="flex items-center" style={{ gap: '12px' }}>
-                <Avatar className="h-9 w-9 border border-border">
-                  <AvatarFallback className="bg-primary-50 text-primary-700 text-xs font-bold">
-                    {getInitials(emp.full_name)}
-                  </AvatarFallback>
-                </Avatar>
-                <div className="flex flex-col">
-                  <Link
-                    href={`/admin/employees/${emp.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="font-bold text-text-primary hover:text-primary-600 flex items-center gap-1.5"
-                  >
-                    <span>{emp.full_name}</span>
-                    <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
-                  </Link>
-                  <span className="text-[12px] text-text-muted">{emp.job_title}</span>
+        {filtered.map((emp) => {
+          const st = getEmpStatus(emp);
+          return (
+            <DataTableRow
+              key={emp.id}
+              onClick={() => router.push(`/admin/employees/${emp.id}`)}
+            >
+              <DataTableCell className="font-bold text-primary-700 tabular-nums">
+                <Link
+                  href={`/admin/employees/${emp.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="hover:underline"
+                >
+                  {emp.employee_id}
+                </Link>
+              </DataTableCell>
+              <DataTableCell>
+                <div className="flex items-center" style={{ gap: '12px' }}>
+                  <Avatar className="h-9 w-9 border border-border">
+                    <AvatarFallback className="bg-primary-50 text-primary-700 text-xs font-bold">
+                      {getInitials(emp.full_name)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <div className="flex flex-col">
+                    <Link
+                      href={`/admin/employees/${emp.id}`}
+                      onClick={(e) => e.stopPropagation()}
+                      className="font-bold text-text-primary hover:text-primary-600 flex items-center gap-1.5"
+                    >
+                      <span>{emp.full_name}</span>
+                      <ExternalLink className="w-3.5 h-3.5 text-text-muted" />
+                    </Link>
+                    <span className="text-[12px] text-text-muted">
+                      {emp.department || 'Sales'} • {emp.job_title}
+                    </span>
+                  </div>
                 </div>
-              </div>
-            </DataTableCell>
-            <DataTableCell>
-              <div className="flex flex-col">
-                <span className="text-text-secondary font-medium">{emp.email}</span>
-                {emp.phone && (
-                  <span className="text-[12px] text-text-muted tabular-nums">
-                    {emp.phone}
+              </DataTableCell>
+              <DataTableCell>
+                <div className="flex flex-col">
+                  <span className="text-text-secondary font-medium">{emp.email}</span>
+                  {emp.phone && (
+                    <span className="text-[12px] text-text-muted tabular-nums">
+                      {emp.phone}
+                    </span>
+                  )}
+                </div>
+              </DataTableCell>
+              <DataTableCell align="center">
+                {st === 'deactivated' ? (
+                  <span className="text-xs text-text-muted font-medium">
+                    0 (Reverted to Pool)
+                  </span>
+                ) : (
+                  <span className="font-bold text-text-primary tabular-nums text-[14px]">
+                    {formatNumber(emp.active_leads_count || 0)}
                   </span>
                 )}
-              </div>
-            </DataTableCell>
-            <DataTableCell className="text-text-secondary font-medium">
-              {emp.department || 'Sales'}
-            </DataTableCell>
-            <DataTableCell align="center">
-              {emp.is_active ? (
-                <span
-                  className="inline-flex items-center rounded-full bg-success-bg text-success text-xs font-semibold border border-success/30"
-                  style={{ padding: '3px 10px', gap: '5px' }}
+              </DataTableCell>
+              <DataTableCell align="center">
+                {st === 'active' && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-success-bg text-success text-xs font-semibold border border-success/30"
+                    style={{ padding: '4px 11px', gap: '6px' }}
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Active</span>
+                  </span>
+                )}
+                {st === 'paused' && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-warning-bg text-warning text-xs font-semibold border border-warning/30"
+                    style={{ padding: '4px 11px', gap: '6px' }}
+                  >
+                    <PauseCircle className="w-3.5 h-3.5" />
+                    <span>Paused (Portal Locked)</span>
+                  </span>
+                )}
+                {st === 'deactivated' && (
+                  <span
+                    className="inline-flex items-center rounded-full bg-danger-bg text-danger text-xs font-semibold border border-danger/30"
+                    style={{ padding: '4px 11px', gap: '6px' }}
+                  >
+                    <XCircle className="w-3.5 h-3.5" />
+                    <span>Deactivated (History Kept)</span>
+                  </span>
+                )}
+              </DataTableCell>
+              <DataTableCell className="text-text-muted tabular-nums">
+                {formatDate(emp.created_at)}
+              </DataTableCell>
+              <DataTableCell align="right">
+                <div
+                  className="flex items-center justify-end"
+                  style={{ gap: '8px' }}
+                  onClick={(e) => e.stopPropagation()}
                 >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Active</span>
-                </span>
-              ) : (
-                <span
-                  className="inline-flex items-center rounded-full bg-danger-bg text-danger text-xs font-semibold border border-danger/30"
-                  style={{ padding: '3px 10px', gap: '5px' }}
-                >
-                  <XCircle className="w-3.5 h-3.5" />
-                  <span>Deactivated</span>
-                </span>
-              )}
-            </DataTableCell>
-            <DataTableCell className="text-text-muted tabular-nums">
-              {formatDate(emp.created_at)}
-            </DataTableCell>
-            <DataTableCell align="right">
-              <div
-                className="flex items-center justify-end"
-                style={{ gap: '8px' }}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <Button
-                  size="xs"
-                  variant="outline"
-                  onClick={() => router.push(`/admin/employees/${emp.id}`)}
-                >
-                  <span>View Daily Log & Stats</span>
-                </Button>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => router.push(`/admin/employees/${emp.id}`)}
+                  >
+                    <span>{st === 'deactivated' ? 'View History' : 'Daily Log & Stats'}</span>
+                  </Button>
+
+                  {st === 'active' && (
                     <Button
-                      variant="ghost"
-                      size="icon"
-                      className="h-8 w-8 rounded-lg text-text-muted hover:text-text-primary"
+                      size="xs"
+                      variant="outline"
+                      className="text-warning border-warning/30 hover:bg-warning-bg"
+                      onClick={() => handlePauseOrResume(emp, 'pause')}
                     >
-                      <MoreHorizontal className="w-4 h-4" />
+                      <PauseCircle className="w-3.5 h-3.5" />
+                      <span>Pause</span>
                     </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="end" className="w-48">
-                    <DropdownMenuItem
-                      onClick={() => router.push(`/admin/employees/${emp.id}`)}
+                  )}
+
+                  {st === 'paused' && (
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      className="text-success border-success/30 hover:bg-success-bg"
+                      onClick={() => handlePauseOrResume(emp, 'resume')}
                     >
-                      View Profile & Work History
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => toggleActiveStatus(emp)}
-                      className={emp.is_active ? 'text-danger' : 'text-success'}
-                    >
-                      {emp.is_active ? 'Deactivate Account' : 'Reactivate Account'}
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => handleResetPassword(emp)}>
-                      Reset Password to Default
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </DataTableCell>
-          </DataTableRow>
-        ))}
+                      <PlayCircle className="w-3.5 h-3.5" />
+                      <span>Activate</span>
+                    </Button>
+                  )}
+
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 rounded-lg text-text-muted hover:text-text-primary"
+                      >
+                        <MoreHorizontal className="w-4 h-4" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="end" className="w-56">
+                      <DropdownMenuItem
+                        onClick={() => router.push(`/admin/employees/${emp.id}`)}
+                      >
+                        View Daily Work Log & History
+                      </DropdownMenuItem>
+
+                      {st === 'active' && (
+                        <>
+                          <DropdownMenuItem onClick={() => handlePauseOrResume(emp, 'pause')}>
+                            Pause Portal Access (Temporary)
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleResetPassword(emp)}>
+                            Reset Password to Default
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setDeactivateTarget(emp)}
+                            className="text-danger"
+                          >
+                            Deactivate Permanently & Revert Leads
+                          </DropdownMenuItem>
+                        </>
+                      )}
+
+                      {st === 'paused' && (
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => handlePauseOrResume(emp, 'resume')}
+                            className="text-success"
+                          >
+                            Resume / Activate Portal Access
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleResetPassword(emp)}>
+                            Reset Password to Default
+                          </DropdownMenuItem>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onClick={() => setDeactivateTarget(emp)}
+                            className="text-danger"
+                          >
+                            Deactivate Permanently & Revert Leads
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
+              </DataTableCell>
+            </DataTableRow>
+          );
+        })}
       </DataTable>
+
+      {/* Permanent Deactivation & Automatic Lead Reversion Modal */}
+      <Dialog
+        open={Boolean(deactivateTarget)}
+        onOpenChange={(open) => !open && setDeactivateTarget(null)}
+      >
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-danger">
+              <ShieldAlert className="w-5 h-5 text-danger" />
+              <span>Permanently Deactivate {deactivateTarget?.full_name}?</span>
+            </DialogTitle>
+            <DialogDescription>
+              This action permanently revokes portal access for{' '}
+              <strong>
+                {deactivateTarget?.full_name} ({deactivateTarget?.employee_id})
+              </strong>
+              . A deactivated account cannot be made active again.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            <div
+              className="rounded-xl bg-warning-bg border border-warning/30 text-warning text-[13px] leading-relaxed"
+              style={{ padding: '14px 16px' }}
+            >
+              <strong className="font-bold block mb-1">
+                1. Automatic Lead Reversion ({formatNumber(deactivateTarget?.active_leads_count || 0)} Active Leads):
+              </strong>
+              All{' '}
+              <strong>{formatNumber(deactivateTarget?.active_leads_count || 0)} leads</strong>{' '}
+              currently assigned to {deactivateTarget?.full_name} will be automatically reverted back to the{' '}
+              <strong>Unassigned Pool</strong> so you can assign them to other active sales representatives.
+            </div>
+
+            <div
+              className="rounded-xl bg-[#F8FAFB] border border-border text-[13px] text-text-secondary leading-relaxed"
+              style={{ padding: '14px 16px' }}
+            >
+              <strong className="text-text-primary font-bold block mb-1">
+                2. Complete History Preserved:
+              </strong>
+              Their profile will remain under the <strong>Deactivated</strong> tab. None of their daily work logs, call records, stage markings, or remarks will be deleted.
+              <br />
+              <span className="text-xs text-text-muted mt-1 block">
+                Tip: If you only want to block their portal temporarily and activate them again later, click <strong>Cancel</strong> and use <strong>Pause Portal Access</strong> instead.
+              </span>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => setDeactivateTarget(null)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={deactivating}
+              onClick={handleConfirmPermanentDeactivate}
+              style={{ backgroundColor: '#C74747', color: '#FFFFFF' }}
+            >
+              {deactivating
+                ? 'Reverting Leads & Deactivating...'
+                : 'Confirm Permanent Deactivation'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Add Employee Modal */}
       <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>

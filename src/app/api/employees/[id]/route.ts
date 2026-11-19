@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDbClient } from '@/lib/supabase/server';
+import { getDbClient, fetchAllRows } from '@/lib/supabase/server';
+import { resolveAccountStatus } from '@/app/api/employees/route';
 
 export async function GET(
   _request: NextRequest,
@@ -23,24 +24,31 @@ export async function GET(
     }
 
     const empUuid = employee.id;
+    const accountStatus = resolveAccountStatus(employee);
 
-    // 2. Fetch all assignments, activities, remarks, follow_ups, and unassigned pool count in parallel
+    // 2. Fetch all assignments (both active AND historical/reverted), activities, remarks, follow_ups
     const [
-      { data: empAssignments },
-      { data: allActiveAssignments },
-      { data: allLeads },
+      empAssignments,
+      allActiveAssignments,
+      allLeads,
       { data: empActivities },
       { data: empRemarks },
       { data: empFollowUps },
     ] = await Promise.all([
-      supabase
-        .from('lead_assignments')
-        .select('id, lead_id, assignment_type, assigned_at, is_active')
-        .eq('employee_id', empUuid)
-        .eq('is_active', true)
-        .order('assigned_at', { ascending: false }),
-      supabase.from('lead_assignments').select('lead_id').eq('is_active', true),
-      supabase.from('leads').select('*').order('updated_at', { ascending: false }),
+      fetchAllRows((from, to) =>
+        supabase
+          .from('lead_assignments')
+          .select('id, lead_id, assignment_type, assigned_at, released_at, is_active')
+          .eq('employee_id', empUuid)
+          .order('assigned_at', { ascending: false })
+          .range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('lead_assignments').select('lead_id').eq('is_active', true).range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('leads').select('*').order('updated_at', { ascending: false }).range(from, to)
+      ),
       supabase
         .from('lead_activities')
         .select('*, lead:leads(id, lead_number, business_name, contact_person, phone, status, category, city)')
@@ -66,17 +74,41 @@ export async function GET(
       (l: any) => !allAssignedLeadIds.has(l.id) && l.status !== 'archived' && l.status !== 'unqualified'
     ).length;
 
-    const assignedLeads = (empAssignments || [])
+    const activeAssignedLeads = (empAssignments || [])
+      .filter((a: any) => a.is_active)
       .map((a: any) => {
         const lead = leadMap.get(a.lead_id);
         if (!lead) return null;
         return {
           ...lead,
           assigned_at: a.assigned_at,
+          released_at: null,
+          is_reverted: false,
           assignment_type: a.assignment_type,
         };
       })
       .filter(Boolean);
+
+    const revertedHistoricalLeads = (empAssignments || [])
+      .filter((a: any) => !a.is_active)
+      .map((a: any) => {
+        const lead = leadMap.get(a.lead_id);
+        if (!lead) return null;
+        return {
+          ...lead,
+          assigned_at: a.assigned_at,
+          released_at: a.released_at,
+          is_reverted: true,
+          assignment_type: a.assignment_type,
+        };
+      })
+      .filter(Boolean);
+
+    // If employee is deactivated (so activeAssignedLeads is 0), include their historical leads in assignedLeads view so history is 100% inspectable
+    const assignedLeads =
+      activeAssignedLeads.length > 0
+        ? [...activeAssignedLeads, ...revertedHistoricalLeads]
+        : revertedHistoricalLeads;
 
     // 3. Compute KPI stats & Stage Breakdown
     const stageBreakdown: Record<string, number> = {
@@ -272,10 +304,15 @@ export async function GET(
     );
 
     return NextResponse.json({
-      employee,
+      employee: {
+        ...employee,
+        account_status: accountStatus,
+      },
       unassignedPoolCount,
       stats: {
-        totalAssigned,
+        totalAssigned: activeAssignedLeads.length,
+        revertedLeadsCount: revertedHistoricalLeads.length,
+        totalHistoricalHandled: assignedLeads.length,
         contactedLeads,
         interestedLeads,
         pendingLeads,
