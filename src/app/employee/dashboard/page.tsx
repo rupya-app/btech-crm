@@ -5,19 +5,33 @@ import {
   CheckCircle2,
   Clock,
   Phone,
-  Layers,
   TrendingUp,
   AlertCircle,
   Flame,
+  BarChart3,
+  ArrowRight,
 } from 'lucide-react';
 import { AdminPageContainer, PageCard } from '@/components/common';
 import { KPICard } from '@/components/dashboard/kpi-card';
 import { UpcomingFollowups } from '@/components/dashboard/upcoming-followups';
 import { getEmployeePersonalKPIs } from '@/services/analytics.service';
+import { getCurrentUserId } from '@/services/leads.service';
 import { Button } from '@/components/ui/button';
+import { formatNumber, formatPercentage } from '@/lib/utils';
+
+export const dynamic = 'force-dynamic';
 
 export default async function EmployeeDashboardPage() {
-  const stats = await getEmployeePersonalKPIs('emp-current');
+  const employeeId = await getCurrentUserId();
+  const stats = await getEmployeePersonalKPIs(employeeId || undefined);
+
+  const stageProgress = [
+    { label: 'New', count: stats.myAssignedLeads - stats.contactedLeads, color: '#0EA5E9' },
+    { label: 'Contacted', count: stats.contactedLeads, color: '#3B82F6' },
+    { label: 'Interested', count: stats.interestedLeads, color: '#14B8A6' },
+    { label: 'Pending', count: stats.pendingLeads, color: '#F59E0B' },
+    { label: 'Confirmed', count: stats.confirmedLeads, color: '#10B981' },
+  ];
 
   return (
     <AdminPageContainer>
@@ -32,10 +46,10 @@ export default async function EmployeeDashboardPage() {
             style={{ padding: '5px 14px', gap: '8px', marginBottom: '14px' }}
           >
             <Flame className="w-3.5 h-3.5 text-warning" />
-            <span>Sales Workspace • Daily Target: 20 Calls</span>
+            <span>Personal Sales Workspace • Target: 20 Calls / Day</span>
           </div>
           <h1 className="text-[28px] leading-[1.2] font-bold tracking-tight">
-            Welcome back!
+            Sales Command Center
           </h1>
           <p
             className="text-[14px] text-primary-100/90 max-w-xl leading-relaxed"
@@ -47,9 +61,9 @@ export default async function EmployeeDashboardPage() {
             </strong>{' '}
             today and{' '}
             <strong className="text-white font-semibold">
-              {stats.availablePoolLeads} leads
+              {formatNumber(stats.myAssignedLeads)} active leads
             </strong>{' '}
-            available in the self-selection pool.
+            in your assigned telecalling queue.
           </p>
         </div>
 
@@ -60,9 +74,9 @@ export default async function EmployeeDashboardPage() {
             className="bg-white/10 hover:bg-white/20 border-white/25 text-white hover:text-white text-[13px] font-semibold h-11 rounded-xl"
             style={{ padding: '0 18px', height: '42px' }}
           >
-            <Link href="/employee/lead-pool" className="flex items-center" style={{ gap: '8px' }}>
-              <Layers className="w-4 h-4" />
-              <span>Claim New Leads</span>
+            <Link href="/employee/performance" className="flex items-center" style={{ gap: '8px' }}>
+              <BarChart3 className="w-4 h-4" />
+              <span>My Performance</span>
             </Link>
           </Button>
 
@@ -79,7 +93,7 @@ export default async function EmployeeDashboardPage() {
         </div>
       </div>
 
-      {/* KPI Cards Grid */}
+      {/* Row 1: Core KPIs */}
       <div
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
         style={{ gap: '20px' }}
@@ -90,96 +104,172 @@ export default async function EmployeeDashboardPage() {
           value={stats.myAssignedLeads}
           icon={Briefcase}
           accentColor="#147D72"
-          subtitle="Actively in your pipeline"
+          subtitle="Assigned to your queue"
           href="/employee/my-leads"
         />
         <KPICard
           label="Confirmed Won Deals"
-          stageTag="Won Stage"
+          stageTag="Won Milestone"
           value={stats.confirmedLeads}
           icon={CheckCircle2}
           accentColor="#10B981"
-          trend={{ value: 25.0, isPositive: true, period: 'this month' }}
+          subtitle="Closed client orders"
           href="/employee/confirmed"
         />
         <KPICard
-          label="Unassigned Pool Leads"
-          stageTag="Pool Queue"
-          value={stats.availablePoolLeads}
-          icon={Layers}
-          accentColor="#6366F1"
-          subtitle="Ready to self-claim"
-          href="/employee/lead-pool"
+          label="Calls Made Today"
+          stageTag="Daily Target"
+          value={stats.callsToday}
+          icon={Phone}
+          accentColor="#0EA5E9"
+          subtitle={`${stats.callsToday} / 20 Target`}
+          href="/employee/call-history"
         />
         <KPICard
           label="Follow-ups Due Today"
-          stageTag="Action Needed"
+          stageTag="Callback Queue"
           value={stats.followUpsDue}
           icon={Clock}
           accentColor="#8B5CF6"
-          subtitle="Action required today"
+          subtitle="Scheduled client callbacks"
           href="/employee/follow-ups"
         />
       </div>
 
-      {/* Second Row KPIs */}
+      {/* Row 2: Secondary Conversion KPIs */}
       <div
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4"
         style={{ gap: '20px' }}
       >
         <KPICard
-          label="Calls Made Today"
-          stageTag="Outreach"
-          value={stats.callsToday}
-          icon={Phone}
-          accentColor="#3B82F6"
-          subtitle="Logged outbound attempts"
-          href="/employee/call-history"
-        />
-        <KPICard
           label="Interested Prospects"
           stageTag="High Intent"
           value={stats.interestedLeads}
           icon={TrendingUp}
-          accentColor="#0D9488"
+          accentColor="#14B8A6"
           subtitle="Evaluating proposals"
           href="/employee/my-leads?status=interested"
         />
         <KPICard
           label="Pending Decisions"
-          stageTag="Awaiting Client"
+          stageTag="Commercial Review"
           value={stats.pendingLeads}
           icon={AlertCircle}
           accentColor="#F59E0B"
-          subtitle="In commercial review"
+          subtitle="In client decision phase"
           href="/employee/my-leads?status=pending"
         />
         <PageCard
           className="flex flex-col justify-between min-h-[164px]"
-          style={{ borderTop: '3.5px solid #059669' }}
+          style={{ borderTop: '3.5px solid #10B981' }}
         >
           <span className="text-[13px] font-semibold text-text-secondary">My Conversion Rate</span>
           <div className="my-3 flex items-baseline" style={{ gap: '10px', margin: '14px 0' }}>
-            <span className="text-[32px] font-bold text-text-primary tabular-nums leading-none">
+            <span className="text-[32px] font-bold text-success tabular-nums leading-none">
               {stats.conversionRate}%
             </span>
             <span
               className="text-xs font-bold text-success bg-success-bg rounded-full border border-success/30"
               style={{ padding: '2px 10px' }}
             >
-              High
+              Won
             </span>
           </div>
           <div
             className="border-t border-border-light text-[12px] text-text-muted"
             style={{ paddingTop: '12px' }}
           >
-            Contact rate: <strong className="text-text-primary">{stats.contactRate}%</strong>
+            {stats.confirmedLeads} won / {stats.myAssignedLeads} assigned
+          </div>
+        </PageCard>
+
+        <PageCard
+          className="flex flex-col justify-between min-h-[164px]"
+          style={{ borderTop: '3.5px solid #3B82F6' }}
+        >
+          <span className="text-[13px] font-semibold text-text-secondary">Pipeline Contact Rate</span>
+          <div className="my-3 flex items-baseline" style={{ gap: '10px', margin: '14px 0' }}>
+            <span className="text-[32px] font-bold text-[#1D4ED8] tabular-nums leading-none">
+              {stats.contactRate}%
+            </span>
+            <span
+              className="text-xs font-bold text-[#1D4ED8] bg-[#DBEAFE] rounded-full border border-[#93C5FD]"
+              style={{ padding: '2px 10px' }}
+            >
+              Engaged
+            </span>
+          </div>
+          <div
+            className="border-t border-border-light text-[12px] text-text-muted"
+            style={{ paddingTop: '12px' }}
+          >
+            {stats.contactedLeads} contacted leads
           </div>
         </PageCard>
       </div>
 
-      {/* Upcoming Followups for Employee */}
+      {/* Row 3: Pipeline Stage Distribution Banner for My Leads */}
+      <div
+        className="rounded-2xl bg-white border border-[#E7EAEE] shadow-xs"
+        style={{ padding: '24px 28px' }}
+      >
+        <div className="flex items-center justify-between" style={{ marginBottom: '16px' }}>
+          <div>
+            <h3 className="text-[16px] font-bold text-text-primary">
+              My Assigned Pipeline Stage Breakdown
+            </h3>
+            <p className="text-xs text-text-muted mt-0.5">
+              Live progression of your {formatNumber(stats.myAssignedLeads)} assigned leads
+            </p>
+          </div>
+          <Button asChild variant="outline" size="sm">
+            <Link href="/employee/my-leads">
+              <span>View All Pipeline</span>
+              <ArrowRight className="w-3.5 h-3.5 ml-1" />
+            </Link>
+          </Button>
+        </div>
+
+        {/* Multi-segmented color progress bar */}
+        <div
+          className="w-full rounded-full bg-[#F4F6F9] overflow-hidden flex border border-[#E7EAEE]"
+          style={{ height: '14px', gap: '3px', padding: '2px', marginBottom: '20px' }}
+        >
+          {stageProgress.map((s) => {
+            if (s.count <= 0) return null;
+            const pct = Math.max(4, Math.round((s.count / (stats.myAssignedLeads || 1)) * 100));
+            return (
+              <div
+                key={s.label}
+                style={{ width: `${pct}%`, backgroundColor: s.color }}
+                className="h-full rounded-full transition-all duration-300"
+                title={`${s.label}: ${s.count} (${pct}%)`}
+              />
+            );
+          })}
+        </div>
+
+        {/* Stage Stat Pills */}
+        <div className="grid grid-cols-2 sm:grid-cols-5" style={{ gap: '12px' }}>
+          {stageProgress.map((s) => (
+            <div
+              key={s.label}
+              className="rounded-xl border border-[#E7EAEE] bg-[#F8FAFB] flex items-center justify-between"
+              style={{ padding: '10px 14px' }}
+            >
+              <span className="flex items-center text-xs font-semibold text-text-secondary" style={{ gap: '6px' }}>
+                <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: s.color }} />
+                <span>{s.label}</span>
+              </span>
+              <span className="text-xs font-bold text-text-primary tabular-nums">
+                {s.count}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Row 4: Follow-up Queue Component */}
       <UpcomingFollowups isAdmin={false} />
     </AdminPageContainer>
   );

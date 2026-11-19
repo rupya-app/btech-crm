@@ -225,11 +225,10 @@ export const employeeNavSections: NavSection[] = [
     items: [
       { label: 'My Dashboard', href: '/employee/dashboard', icon: LayoutDashboard },
       { label: 'My Pipeline Leads', href: '/employee/my-leads', icon: Briefcase, stageColor: '#147D72' },
-      { label: 'Unassigned Pool', href: '/employee/lead-pool', icon: Layers, stageColor: '#6366F1' },
       { label: 'Follow-up Queue', href: '/employee/follow-ups', icon: Clock, stageColor: '#8B5CF6' },
       { label: 'Call Log History', href: '/employee/call-history', icon: Phone, stageColor: '#3B82F6' },
       { label: 'Confirmed Won', href: '/employee/confirmed', icon: CheckCircle2, stageColor: '#10B981' },
-      { label: 'My Performance', href: '/employee/performance', icon: BarChart3 },
+      { label: 'My Performance', href: '/employee/performance', icon: BarChart3, stageColor: '#0EA5E9' },
       { label: 'Account Profile', href: '/employee/profile', icon: UserCog },
     ],
   },

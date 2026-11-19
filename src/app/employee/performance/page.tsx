@@ -1,49 +1,60 @@
 import React from 'react';
-import { AdminPageContainer, PageHeader, PageCard } from '@/components/common';
-import { getEmployeePersonalKPIs } from '@/services/analytics.service';
-import { formatPercentage } from '@/lib/utils';
+import { AdminPageContainer, PageHeader } from '@/components/common';
+import { getEmployeePerformanceAnalytics } from '@/services/analytics.service';
+import { getCurrentUserId } from '@/services/leads.service';
+import { PerformanceCharts } from '@/components/dashboard/performance-charts';
+import { BarChart3 } from 'lucide-react';
+
+export const dynamic = 'force-dynamic';
 
 export default async function EmployeePerformancePage() {
-  const stats = await getEmployeePersonalKPIs('emp-current');
+  const employeeId = await getCurrentUserId();
+  const perf = await getEmployeePerformanceAnalytics(employeeId || undefined);
+
+  if (!perf) {
+    return (
+      <AdminPageContainer>
+        <PageHeader
+          title="My Sales Performance & Activity Trends"
+          description="Detailed analytical breakdown of your telecalling productivity, conversion ratios, and stage progression."
+        />
+        <div className="p-12 text-center text-sm text-text-muted">
+          No performance analytics available yet.
+        </div>
+      </AdminPageContainer>
+    );
+  }
 
   return (
     <AdminPageContainer>
       <PageHeader
-        title="My Sales Performance & Targets"
-        description="Review your personal conversion ratios, telecalling output, and follow-up efficiency."
+        title="My Sales Performance & Activity Trends"
+        badge={
+          <span
+            className="inline-flex items-center rounded-full text-xs font-bold tracking-wide"
+            style={{
+              padding: '4px 12px',
+              gap: '6px',
+              backgroundColor: '#E0F2FE',
+              color: '#0369A1',
+              border: '1px solid #7DD3FC',
+            }}
+          >
+            <BarChart3 className="w-3.5 h-3.5 text-[#0EA5E9]" />
+            <span>Interactive Productivity Analytics</span>
+          </span>
+        }
+        description="Comprehensive daily, weekly, and monthly activity metrics, telecalling volume, conversion rates, and stage progression."
       />
 
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-        <PageCard>
-          <span className="text-[13px] font-medium text-text-secondary">My Conversion Rate</span>
-          <div className="mt-2 text-3xl sm:text-4xl font-bold text-success tabular-nums">
-            {formatPercentage(stats.conversionRate)}
-          </div>
-          <span className="text-[13px] text-text-muted mt-1.5 block">
-            {stats.confirmedLeads} confirmed deals / {stats.myAssignedLeads} assigned leads
-          </span>
-        </PageCard>
-
-        <PageCard>
-          <span className="text-[13px] font-medium text-text-secondary">Pipeline Contact Rate</span>
-          <div className="mt-2 text-3xl sm:text-4xl font-bold text-primary-700 tabular-nums">
-            {formatPercentage(stats.contactRate)}
-          </div>
-          <span className="text-[13px] text-text-muted mt-1.5 block">
-            {stats.contactedLeads} out of {stats.myAssignedLeads} leads engaged
-          </span>
-        </PageCard>
-
-        <PageCard>
-          <span className="text-[13px] font-medium text-text-secondary">Daily Call Target (20)</span>
-          <div className="mt-2 text-3xl sm:text-4xl font-bold text-accent-blue tabular-nums">
-            {stats.callsToday} / 20
-          </div>
-          <span className="text-[13px] text-text-muted mt-1.5 block">
-            70% completed today
-          </span>
-        </PageCard>
-      </div>
+      <PerformanceCharts
+        dailyData={perf.dailyData}
+        weeklyData={perf.weeklyData}
+        monthlyData={perf.monthlyData}
+        stageDistribution={perf.stageDistribution}
+        outcomeBreakdown={perf.outcomeBreakdown}
+        kpis={perf.kpis}
+      />
     </AdminPageContainer>
   );
 }

@@ -2,19 +2,29 @@ import React from 'react';
 import Link from 'next/link';
 import { Clock, Phone, Calendar, ArrowRight, User } from 'lucide-react';
 import { getDbClient } from '@/lib/supabase/server';
+import { getCurrentUserId } from '@/services/leads.service';
 import { formatDateTime } from '@/lib/utils';
 
 export async function UpcomingFollowups({ isAdmin = true }: { isAdmin?: boolean }) {
   const supabase = await getDbClient();
-  const { data } = await supabase
+  let query = supabase
     .from('follow_ups')
     .select(
-      'id, lead_id, scheduled_at, purpose, notes, status, lead:leads(business_name, contact_person, phone), employee:profiles(full_name)'
+      'id, lead_id, scheduled_at, purpose, notes, status, employee_id, lead:leads(business_name, contact_person, phone), employee:profiles(full_name)'
     )
     .neq('status', 'completed')
     .neq('status', 'cancelled')
     .order('scheduled_at', { ascending: true })
     .limit(6);
+
+  if (!isAdmin) {
+    const employeeId = await getCurrentUserId();
+    if (employeeId) {
+      query = query.eq('employee_id', employeeId);
+    }
+  }
+
+  const { data } = await query;
 
   const followups = (data || []).map((f: any) => {
     const schedMs = new Date(f.scheduled_at).getTime();

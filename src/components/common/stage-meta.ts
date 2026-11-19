@@ -190,6 +190,19 @@ export const CRM_STATUS_TABS: TabItem[] = [
   },
 ];
 
+export const EMPLOYEE_STATUS_TABS: TabItem[] = CRM_STATUS_TABS.filter(
+  (t) => t.id !== 'unassigned'
+).map((t) =>
+  t.id === 'all'
+    ? {
+        ...t,
+        label: 'All My Pipeline Leads',
+        pageTitle: 'My Assigned Pipeline Leads',
+        pageDescription: 'Leads actively assigned to your personal sales queue for outbound telecalling.',
+      }
+    : t
+);
+
 export function getStageMeta(statusParam?: string): TabItem {
   const norm = (statusParam || 'all').toLowerCase();
   return (

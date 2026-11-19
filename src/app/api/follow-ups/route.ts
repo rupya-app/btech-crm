@@ -1,15 +1,51 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDbClient, invalidateCrmCache } from '@/lib/supabase/server';
+import { getDbClient, createServerSupabaseClient, invalidateCrmCache } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   try {
     const supabase = await getDbClient();
-    const { data, error } = await supabase
+    const url = new URL(request.url);
+    const requestedEmpId = url.searchParams.get('employeeId');
+
+    let currentUserId: string | null = null;
+    let currentUserRole: string | null = null;
+
+    try {
+      const cookieStore = await cookies();
+      const cached = cookieStore.get('crm_profile')?.value;
+      if (cached) {
+        const parsed = JSON.parse(decodeURIComponent(cached));
+        currentUserId = parsed?.id || null;
+        currentUserRole = parsed?.role || null;
+      }
+    } catch {}
+
+    if (!currentUserId) {
+      try {
+        const authClient = await createServerSupabaseClient();
+        const {
+          data: { user },
+        } = await authClient.auth.getUser();
+        currentUserId = user?.id || null;
+      } catch {}
+    }
+
+    let query = supabase
       .from('follow_ups')
       .select(
         '*, lead:leads(id, business_name, contact_person, phone), employee:profiles(id, full_name, employee_id)'
       )
       .order('scheduled_at', { ascending: true });
+
+    // If logged in user is employee, or specific employee requested, filter strictly
+    if (currentUserRole === 'employee' && currentUserId) {
+      query = query.eq('employee_id', currentUserId);
+    } else if (requestedEmpId) {
+      query = query.eq('employee_id', requestedEmpId);
+    }
+
+    const { data, error } = await query;
 
     if (error) {
       return NextResponse.json({ followups: [] });

@@ -21,6 +21,7 @@ import { LeadStatusCounts } from '@/services/leads.service';
 import { LeadStatusBadge } from './lead-status-badge';
 import { LeadPriorityBadge } from './lead-priority-badge';
 import { SegmentedStatusTabs } from '@/components/common/segmented-status-tabs';
+import { CRM_STATUS_TABS, EMPLOYEE_STATUS_TABS } from '@/components/common/stage-meta';
 import { PageToolbar } from '@/components/common/page-toolbar';
 import { EmptyState } from '@/components/common/empty-state';
 import { SuccessNotice } from '@/components/common/success-notice';
@@ -193,7 +194,10 @@ function LeadTableInternal({
       style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}
     >
       {/* 1. Dedicated Color-Coded Segmented Stage Tabs Bar */}
-      <SegmentedStatusTabs statusCounts={statusCounts} />
+      <SegmentedStatusTabs
+        statusCounts={statusCounts}
+        tabs={isAdmin ? CRM_STATUS_TABS : EMPLOYEE_STATUS_TABS}
+      />
 
       {/* 2. Page Toolbar with Search, Bulk Quantity Assign & Record Summary */}
       <PageToolbar searchPlaceholder="Search business name, phone, email, contact person, or city...">

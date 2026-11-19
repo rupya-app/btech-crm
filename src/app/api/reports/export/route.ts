@@ -82,7 +82,7 @@ export async function POST(request: NextRequest) {
         query,
         supabase
           .from('lead_assignments')
-          .select('lead_id, employee:profiles(full_name, employee_id, is_active)')
+          .select('lead_id, employee:profiles!lead_assignments_employee_id_fkey(full_name, employee_id, is_active)')
           .eq('is_active', true),
       ]);
 

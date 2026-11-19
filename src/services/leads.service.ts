@@ -1,3 +1,4 @@
+import { cookies } from 'next/headers';
 import {
   getDbClient,
   createServerSupabaseClient,
@@ -48,44 +49,36 @@ export async function getLeads(
     const statusStr = params.status ? String(params.status).toLowerCase() : 'all';
 
     if (params.employeeId) {
-      const empLeadIds = allActiveAssigns
-        .filter((a: any) => a.employee_id === params.employeeId)
-        .map((a: any) => a.lead_id);
-
-      if (empLeadIds.length === 0) {
-        return {
-          data: [],
-          total: 0,
-          page,
-          pageSize,
-          totalPages: 1,
-          hasMore: false,
-        };
-      }
-
       let query = supabase
-        .from('leads')
-        .select('*', { count: 'exact' })
-        .in('id', empLeadIds);
+        .from('lead_assignments')
+        .select('assigned_at, lead:leads!inner(*)', { count: 'exact' })
+        .eq('employee_id', params.employeeId)
+        .eq('is_active', true);
 
       if (params.status && statusStr !== 'all' && statusStr !== 'unassigned') {
-        query = query.eq('status', statusStr);
+        if (statusStr === 'unqualified' || statusStr === 'invalid') {
+          query = query.in('lead.status', ['unqualified', 'invalid']);
+        } else if (statusStr === 'follow_up' || statusStr === 'followup') {
+          query = query.in('lead.status', ['follow_up', 'followup']);
+        } else if (statusStr === 'not_interested' || statusStr === 'notinterested') {
+          query = query.in('lead.status', ['not_interested', 'notinterested']);
+        } else {
+          query = query.eq('lead.status', statusStr);
+        }
       }
 
       if (params.search && params.search.trim().length > 0) {
         const s = params.search.trim();
-        query = query.or(
-          `business_name.ilike.%${s}%,contact_person.ilike.%${s}%,phone.ilike.%${s}%,email.ilike.%${s}%,city.ilike.%${s}%,category.ilike.%${s}%`
-        );
+        query = query.ilike('lead.business_name', `%${s}%`);
       }
 
-      const sortBy = params.sortBy || 'created_at';
-      const ascending = params.sortOrder === 'asc';
-      const { data, count } = await query.order(sortBy, { ascending }).range(from, to);
+      const { data, count } = await query
+        .order('assigned_at', { ascending: false })
+        .range(from, to);
 
-      const rows = (data || []).map((l: any) => ({
-        ...l,
-        assigned_rep: assignmentByLeadId.get(l.id) || null,
+      const rows = (data || []).map((d: any) => ({
+        ...d.lead,
+        assigned_rep: assignmentByLeadId.get(d.lead?.id) || null,
       }));
       const total = count ?? rows.length;
 
@@ -345,11 +338,34 @@ export async function getLeadStatusCounts(employeeId?: string): Promise<LeadStat
 
 export async function getCurrentUserId(): Promise<string | null> {
   try {
+    const cookieStore = await cookies();
+    const cached = cookieStore.get('crm_profile')?.value;
+    if (cached) {
+      const parsed = JSON.parse(decodeURIComponent(cached));
+      if (parsed?.id) return parsed.id;
+    }
+  } catch {}
+
+  try {
     const authClient = await createServerSupabaseClient();
     const {
       data: { user },
     } = await authClient.auth.getUser();
     if (user?.id) return user.id;
   } catch {}
+
+  // Fallback for dev / direct testing: first active employee
+  try {
+    const supabase = await getDbClient();
+    const { data: firstEmp } = await supabase
+      .from('profiles')
+      .select('id')
+      .eq('role', 'employee')
+      .eq('is_active', true)
+      .limit(1)
+      .maybeSingle();
+    if (firstEmp?.id) return firstEmp.id;
+  } catch {}
+
   return null;
 }

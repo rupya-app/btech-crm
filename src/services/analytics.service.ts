@@ -1,4 +1,5 @@
-import { getDbClient, createServerSupabaseClient, getCachedOrFetch } from '@/lib/supabase/server';
+import { cookies } from 'next/headers';
+import { getDbClient, createServerSupabaseClient, getCachedOrFetch, fetchAllRows } from '@/lib/supabase/server';
 import { EmployeePerformance } from '@/types';
 
 export interface AdminKPIs {
@@ -432,5 +433,223 @@ export async function getAnalyticsBreakdown() {
     return { sources, callOutcomes, totalCalls: (activities || []).length };
   } catch (err) {
     return { sources: [], callOutcomes: [], totalCalls: 0 };
+  }
+}
+
+export async function getEmployeePerformanceAnalytics(employeeId?: string) {
+  try {
+    const supabase = await getDbClient();
+    let targetEmpId = employeeId;
+
+    if (!targetEmpId || targetEmpId === 'emp-current') {
+      try {
+        const cookieStore = await cookies();
+        const cached = cookieStore.get('crm_profile')?.value;
+        if (cached) {
+          const parsed = JSON.parse(decodeURIComponent(cached));
+          if (parsed?.id) targetEmpId = parsed.id;
+        }
+      } catch {}
+
+      if (!targetEmpId || targetEmpId === 'emp-current') {
+        const { data: firstEmp } = await supabase
+          .from('profiles')
+          .select('id')
+          .eq('role', 'employee')
+          .eq('is_active', true)
+          .limit(1)
+          .maybeSingle();
+        targetEmpId = firstEmp?.id;
+      }
+    }
+
+    const [
+      allLeads,
+      allAssigns,
+      { data: activities },
+      { data: followUps },
+    ] = await Promise.all([
+      fetchAllRows((from, to) =>
+        supabase.from('leads').select('id, status').range(from, to)
+      ),
+      fetchAllRows((from, to) =>
+        supabase.from('lead_assignments').select('lead_id, employee_id').eq('is_active', true).range(from, to)
+      ),
+      supabase
+        .from('lead_activities')
+        .select('id, employee_id, activity_type, call_outcome, created_at, description')
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('follow_ups')
+        .select('id, employee_id, scheduled_at, status'),
+    ]);
+
+    const myAssigns = (allAssigns || []).filter((a: any) => !targetEmpId || a.employee_id === targetEmpId);
+    const myLeadIdSet = new Set(myAssigns.map((a: any) => a.lead_id));
+    const myLeads = (allLeads || []).filter((l: any) => myLeadIdSet.has(l.id));
+
+    const myActivities = (activities || []).filter((a: any) => !targetEmpId || a.employee_id === targetEmpId);
+    const myFollowUps = (followUps || []).filter((f: any) => !targetEmpId || f.employee_id === targetEmpId);
+
+    // Build Daily Series (Last 7 Days)
+    const dailyData: any[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 86400000);
+      const dateKey = d.toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      const label = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', weekday: 'short', day: 'numeric' });
+
+      const dayActs = myActivities.filter((a: any) => {
+        const aDate = new Date(a.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        return aDate === dateKey;
+      });
+
+      const dayCalls = dayActs.filter((a: any) => a.activity_type === 'call_outcome' || Boolean(a.call_outcome)).length;
+      const dayFollowups = myFollowUps.filter((f: any) => {
+        const fDate = new Date(f.scheduled_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+        return fDate === dateKey && f.status === 'completed';
+      }).length;
+      const dayConfirmed = dayActs.filter((a: any) => a.description?.toLowerCase().includes('confirmed')).length;
+
+      dailyData.push({
+        label,
+        calls: dayCalls,
+        followups: dayFollowups,
+        confirmed: dayConfirmed,
+        contacted: dayCalls,
+      });
+    }
+
+    // Build Weekly Series (Last 4 Weeks)
+    const weeklyData: any[] = [];
+    for (let w = 3; w >= 0; w--) {
+      const startMs = Date.now() - (w + 1) * 7 * 86400000;
+      const endMs = Date.now() - w * 7 * 86400000;
+      const label = w === 0 ? 'This Week' : w === 1 ? 'Last Week' : `${w} Wks Ago`;
+
+      const weekActs = myActivities.filter((a: any) => {
+        const t = new Date(a.created_at).getTime();
+        return t >= startMs && t < endMs;
+      });
+
+      const weekCalls = weekActs.filter((a: any) => a.activity_type === 'call_outcome' || Boolean(a.call_outcome)).length;
+      const weekFollowups = myFollowUps.filter((f: any) => {
+        const t = new Date(f.scheduled_at).getTime();
+        return t >= startMs && t < endMs && f.status === 'completed';
+      }).length;
+      const weekConfirmed = weekActs.filter((a: any) => a.description?.toLowerCase().includes('confirmed')).length;
+
+      weeklyData.push({
+        label,
+        calls: weekCalls,
+        followups: weekFollowups,
+        confirmed: weekConfirmed,
+        contacted: weekCalls,
+      });
+    }
+
+    // Build Monthly Series (Last 6 Months)
+    const monthlyData: any[] = [];
+    for (let m = 5; m >= 0; m--) {
+      const d = new Date();
+      d.setMonth(d.getMonth() - m);
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const label = d.toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', month: 'short' });
+
+      const monthActs = myActivities.filter((a: any) => {
+        const aDate = new Date(a.created_at);
+        return aDate.getFullYear() === year && aDate.getMonth() === month;
+      });
+
+      const monthCalls = monthActs.filter((a: any) => a.activity_type === 'call_outcome' || Boolean(a.call_outcome)).length;
+      const monthFollowups = myFollowUps.filter((f: any) => {
+        const fDate = new Date(f.scheduled_at);
+        return fDate.getFullYear() === year && fDate.getMonth() === month && f.status === 'completed';
+      }).length;
+      const monthConfirmed = monthActs.filter((a: any) => a.description?.toLowerCase().includes('confirmed')).length;
+
+      monthlyData.push({
+        label,
+        calls: monthCalls,
+        followups: monthFollowups,
+        confirmed: monthConfirmed,
+        contacted: monthCalls,
+      });
+    }
+
+    // Stage Distribution of assigned leads
+    const stages = [
+      { stage: 'new', label: 'New Inquiries', color: '#0EA5E9' },
+      { stage: 'contacted', label: 'Contacted', color: '#3B82F6' },
+      { stage: 'interested', label: 'Interested Prospects', color: '#14B8A6' },
+      { stage: 'follow_up', label: 'Follow-up Queue', color: '#8B5CF6' },
+      { stage: 'pending', label: 'Pending Decision', color: '#F59E0B' },
+      { stage: 'confirmed', label: 'Confirmed Won Deals', color: '#10B981' },
+      { stage: 'not_interested', label: 'Closed Lost', color: '#F43F5E' },
+    ];
+
+    const stageDistribution = stages.map((s) => ({
+      stage: s.stage,
+      label: s.label,
+      color: s.color,
+      count: myLeads.filter((l: any) => (l.status === 'invalid' ? 'unqualified' : l.status) === s.stage).length,
+    }));
+
+    // Call Outcomes Breakdown
+    const outcomeMap: Record<string, { label: string; color: string }> = {
+      connected: { label: 'Connected / Spoke', color: '#10B981' },
+      call_back: { label: 'Call Back Requested', color: '#147D72' },
+      busy: { label: 'Busy Line', color: '#F59E0B' },
+      no_answer: { label: 'No Answer / Ringing', color: '#3B82F6' },
+      wrong_number: { label: 'Wrong Number', color: '#EF4444' },
+      other: { label: 'Other Outcome', color: '#8B5CF6' },
+    };
+
+    const outcomeCounts = new Map<string, number>();
+    myActivities.forEach((a: any) => {
+      if (a.activity_type === 'call_outcome' || a.call_outcome) {
+        const k = a.call_outcome || 'other';
+        outcomeCounts.set(k, (outcomeCounts.get(k) || 0) + 1);
+      }
+    });
+
+    const outcomeBreakdown = Object.entries(outcomeMap).map(([key, meta]) => ({
+      outcome: key,
+      label: meta.label,
+      color: meta.color,
+      count: outcomeCounts.get(key) || 0,
+    }));
+
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+    const callsToday = myActivities.filter((a: any) => {
+      const aDate = new Date(a.created_at).toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' });
+      return aDate === todayStr && (a.activity_type === 'call_outcome' || Boolean(a.call_outcome));
+    }).length;
+
+    const confirmedDeals = myLeads.filter((l: any) => l.status === 'confirmed').length;
+    const contactedCount = myLeads.filter((l: any) => l.status !== 'new').length;
+    const conversionRate = myLeads.length > 0 ? Number(((confirmedDeals / myLeads.length) * 100).toFixed(1)) : 0;
+    const contactRate = myLeads.length > 0 ? Number(((contactedCount / myLeads.length) * 100).toFixed(1)) : 0;
+
+    return {
+      dailyData,
+      weeklyData,
+      monthlyData,
+      stageDistribution,
+      outcomeBreakdown,
+      kpis: {
+        totalCalls: myActivities.filter((a: any) => a.activity_type === 'call_outcome' || a.call_outcome).length,
+        callsToday,
+        dailyCallTarget: 20,
+        confirmedDeals,
+        totalAssigned: myLeads.length,
+        conversionRate,
+        contactRate,
+        followupsDue: myFollowUps.filter((f: any) => f.status !== 'completed' && f.status !== 'cancelled').length,
+      },
+    };
+  } catch (err) {
+    console.error('getEmployeePerformanceAnalytics error:', err);
+    return null;
   }
 }

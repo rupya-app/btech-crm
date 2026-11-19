@@ -61,20 +61,7 @@ export default async function EmployeeMyLeadsPage({
             <span>My Pipeline • {activeStage.label}</span>
           </span>
         }
-        description={`You currently have ${formatNumber(activeCount)} leads in this pipeline stage.`}
-        actions={
-          <Button
-            asChild
-            variant="outline"
-            className="text-[13px] h-10 px-4 rounded-xl border-border bg-surface hover:bg-surface-muted font-medium shadow-xs"
-            style={{ padding: '0 16px', height: '40px' }}
-          >
-            <Link href="/employee/lead-pool" className="flex items-center gap-2" style={{ gap: '8px' }}>
-              <Layers className="w-4 h-4 text-text-muted" />
-              <span>Browse Unassigned Pool</span>
-            </Link>
-          </Button>
-        }
+        description={`You currently have ${formatNumber(activeCount)} leads in your personal sales pipeline.`}
       />
 
       {/* Leads Table */}
