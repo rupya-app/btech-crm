@@ -1,91 +1,138 @@
 import React from 'react';
 import Link from 'next/link';
-import { Phone, CheckCircle2, AlertCircle, Clock, Star, MessageSquare } from 'lucide-react';
+import { Phone, CheckCircle2, Clock, Star, Activity, UserPlus } from 'lucide-react';
+import { getDbClient } from '@/lib/supabase/server';
 import { formatRelativeTime } from '@/lib/utils';
 
-export function RecentActivityFeed() {
-  const activities = [
-    {
-      id: '1',
-      title: 'Lead Confirmed',
-      desc: 'Dr. Arun Nair confirmed software subscription for Vanguard Healthtech Labs.',
-      time: new Date(Date.now() - 3600000 * 2).toISOString(),
-      icon: CheckCircle2,
-      color: 'text-success bg-success-bg',
-      link: '/admin/leads/b0000000-0000-0000-0000-000000000003',
-    },
-    {
-      id: '2',
-      title: 'Call Connected & Remark Added',
-      desc: 'Priya Sharma spoke with Rajesh Verma (Apex Logistics). Pricing proposal requested.',
-      time: new Date(Date.now() - 3600000 * 5).toISOString(),
-      icon: Phone,
-      color: 'text-primary-600 bg-primary-50',
-      link: '/admin/leads/b0000000-0000-0000-0000-000000000001',
-    },
-    {
-      id: '3',
-      title: 'Follow-up Scheduled',
-      desc: 'Vikram Patel scheduled follow-up for tomorrow 11:30 AM with Zenith Engineering.',
-      time: new Date(Date.now() - 3600000 * 7).toISOString(),
-      icon: Clock,
-      color: 'text-warning bg-warning-bg',
-      link: '/admin/leads/b0000000-0000-0000-0000-000000000004',
-    },
-    {
-      id: '4',
-      title: 'New Lead Claimed',
-      desc: 'Rahul Varma claimed UrbanCraft Modern Furniture from unassigned pool.',
-      time: new Date(Date.now() - 3600000 * 9).toISOString(),
-      icon: Star,
-      color: 'text-info bg-info-bg',
-      link: '/admin/leads/b0000000-0000-0000-0000-000000000006',
-    },
-  ];
+export async function RecentActivityFeed() {
+  const supabase = await getDbClient();
+  const { data } = await supabase
+    .from('lead_activities')
+    .select('id, lead_id, activity_type, call_outcome, description, created_at, lead:leads(business_name)')
+    .order('created_at', { ascending: false })
+    .limit(6);
+
+  const activities = (data || []).map((a: any) => {
+    let icon = Phone;
+    let bg = '#CCFBF1';
+    let color = '#0D9488';
+    let border = '#99F6E4';
+    let title = a.activity_type.replace(/_/g, ' ').replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+    if (a.activity_type.includes('confirm')) {
+      icon = CheckCircle2;
+      bg = '#D1FAE5';
+      color = '#059669';
+      border = '#A7F3D0';
+      title = `Deal Confirmed: ${a.lead?.business_name || ''}`;
+    } else if (a.activity_type.includes('followup')) {
+      icon = Clock;
+      bg = '#F3E8FF';
+      color = '#7C3AED';
+      border = '#DDD6FE';
+      title = `Follow-up: ${a.lead?.business_name || ''}`;
+    } else if (a.activity_type.includes('assign') || a.activity_type.includes('claim')) {
+      icon = UserPlus;
+      bg = '#E0F2FE';
+      color = '#0284C7';
+      border = '#BAE6FD';
+      title = `Lead Assigned: ${a.lead?.business_name || ''}`;
+    } else if (a.call_outcome) {
+      title = `Call (${a.call_outcome.replace(/_/g, ' ')}): ${a.lead?.business_name || ''}`;
+    }
+
+    return {
+      id: a.id,
+      title,
+      desc: a.description || 'Activity recorded in pipeline.',
+      time: a.created_at,
+      icon,
+      bg,
+      color,
+      border,
+      link: `/admin/leads/${a.lead_id}`,
+    };
+  });
 
   return (
-    <div className="p-6 rounded-2xl bg-surface border border-border shadow-xs">
-      <div className="flex items-center justify-between mb-4">
-        <div>
-          <h3 className="text-sm font-semibold text-text-primary">Recent Live Activities</h3>
-          <p className="text-[11px] text-text-muted">Real-time audit log of team actions</p>
+    <div
+      className="rounded-2xl bg-white border border-border shadow-xs"
+      style={{ padding: '24px 26px' }}
+    >
+      <div
+        className="flex items-center justify-between border-b border-border-light"
+        style={{ paddingBottom: '16px', marginBottom: '20px' }}
+      >
+        <div className="flex items-center" style={{ gap: '10px' }}>
+          <div
+            className="rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center border border-primary-100"
+            style={{ width: '36px', height: '36px' }}
+          >
+            <Activity className="w-4 h-4" />
+          </div>
+          <div>
+            <h3 className="text-[16px] font-bold text-text-primary">Recent Live Activities</h3>
+            <p className="text-[12px] text-text-muted">Real-time audit log from database</p>
+          </div>
         </div>
         <Link
           href="/admin/activity-logs"
-          className="text-xs font-medium text-primary-600 hover:text-primary-700"
+          className="text-[13px] font-semibold text-primary-600 hover:text-primary-700"
         >
-          View all
+          View all →
         </Link>
       </div>
 
-      <div className="space-y-4">
-        {activities.map((act) => {
-          const Icon = act.icon;
-          return (
-            <div key={act.id} className="flex items-start gap-3 group">
-              <div className={`p-2 rounded-xl shrink-0 ${act.color}`}>
-                <Icon className="w-3.5 h-3.5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center justify-between gap-2">
-                  <Link
-                    href={act.link}
-                    className="text-xs font-semibold text-text-primary group-hover:text-primary-600 truncate"
-                  >
-                    {act.title}
-                  </Link>
-                  <span className="text-[10px] text-text-muted shrink-0 tabular-nums">
-                    {formatRelativeTime(act.time)}
-                  </span>
+      {activities.length === 0 ? (
+        <div className="text-center py-8 text-[13px] text-text-muted">
+          No recent activities recorded yet.
+        </div>
+      ) : (
+        <div className="flex flex-col" style={{ gap: '14px' }}>
+          {activities.map((act) => {
+            const Icon = act.icon;
+            return (
+              <div
+                key={act.id}
+                className="flex items-start group rounded-xl bg-[#F8FAFB] border border-border-light hover:bg-white hover:border-border transition-all"
+                style={{ padding: '14px', gap: '12px' }}
+              >
+                <div
+                  className="rounded-xl shrink-0 flex items-center justify-center"
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    backgroundColor: act.bg,
+                    color: act.color,
+                    border: `1px solid ${act.border}`,
+                  }}
+                >
+                  <Icon className="w-4 h-4" />
                 </div>
-                <p className="text-[11px] text-text-secondary mt-0.5 line-clamp-2">
-                  {act.desc}
-                </p>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center justify-between" style={{ gap: '8px' }}>
+                    <Link
+                      href={act.link}
+                      className="text-[13px] font-bold text-text-primary group-hover:text-primary-600 truncate"
+                    >
+                      {act.title}
+                    </Link>
+                    <span className="text-[11px] text-text-muted shrink-0 tabular-nums font-medium">
+                      {formatRelativeTime(act.time)}
+                    </span>
+                  </div>
+                  <p
+                    className="text-[12.5px] text-text-secondary line-clamp-2 leading-relaxed"
+                    style={{ marginTop: '4px' }}
+                  >
+                    {act.desc}
+                  </p>
+                </div>
               </div>
-            </div>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

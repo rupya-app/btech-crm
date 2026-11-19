@@ -8,70 +8,173 @@ interface LeadPipelineChartProps {
   totalLeads: number;
 }
 
+const STAGE_PALETTE: Record<
+  string,
+  { color: string; bg: string; border: string; text: string; label: string }
+> = {
+  new: {
+    color: '#0EA5E9',
+    bg: '#F0F9FF',
+    border: '#BAE6FD',
+    text: '#0369A1',
+    label: 'New Inquiries',
+  },
+  contacted: {
+    color: '#3B82F6',
+    bg: '#EFF6FF',
+    border: '#BFDBFE',
+    text: '#1D4ED8',
+    label: 'Contacted',
+  },
+  interested: {
+    color: '#14B8A6',
+    bg: '#F0FDFA',
+    border: '#99F6E4',
+    text: '#0F766E',
+    label: 'Interested',
+  },
+  follow_up: {
+    color: '#8B5CF6',
+    bg: '#FAF5FF',
+    border: '#DDD6FE',
+    text: '#6D28D9',
+    label: 'Follow-up Queue',
+  },
+  pending: {
+    color: '#F59E0B',
+    bg: '#FFFBEB',
+    border: '#FDE68A',
+    text: '#B45309',
+    label: 'Pending Decision',
+  },
+  confirmed: {
+    color: '#10B981',
+    bg: '#ECFDF5',
+    border: '#A7F3D0',
+    text: '#047857',
+    label: 'Confirmed Won',
+  },
+  not_interested: {
+    color: '#F43F5E',
+    bg: '#FFF1F2',
+    border: '#FECDD3',
+    text: '#BE123C',
+    label: 'Closed Lost',
+  },
+};
+
 export function LeadPipelineChart({ stages, totalLeads }: LeadPipelineChartProps) {
   return (
-    <div className="p-6 rounded-2xl bg-surface border border-border shadow-xs">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+    <div
+      className="rounded-2xl bg-white border border-border shadow-xs"
+      style={{ padding: '24px 28px' }}
+    >
+      <div
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-2"
+        style={{ marginBottom: '20px' }}
+      >
         <div>
-          <h2 className="text-base font-semibold text-text-primary">Sales Pipeline Funnel</h2>
-          <p className="text-xs text-text-muted mt-0.5">
-            Real-time stage distribution across {formatNumber(totalLeads)} active leads
+          <h2 className="text-[17px] font-bold text-text-primary">
+            Sales Pipeline Stage Distribution
+          </h2>
+          <p className="text-[13px] text-text-muted" style={{ marginTop: '4px' }}>
+            Color-coded stage breakdown across{' '}
+            <strong className="text-text-primary font-semibold">
+              {formatNumber(totalLeads)}
+            </strong>{' '}
+            active leads
           </p>
         </div>
         <Link
           href="/admin/leads"
-          className="text-xs font-medium text-primary-600 hover:text-primary-700 hover:underline"
+          className="text-[13px] font-semibold text-primary-600 hover:text-primary-700 hover:underline"
         >
-          View all leads →
+          Explore full pipeline →
         </Link>
       </div>
 
-      {/* Multi-segmented horizontal progress bar (as in reference Image 5) */}
-      <div className="h-3 w-full rounded-full bg-surface-muted overflow-hidden flex gap-0.5 p-0.5 border border-border-light shadow-inner mb-6">
+      {/* Multi-segmented horizontal progress bar */}
+      <div
+        className="w-full rounded-full bg-surface-muted overflow-hidden flex border border-border-light"
+        style={{ height: '14px', gap: '3px', padding: '2px', marginBottom: '22px' }}
+      >
         {stages.map((stage) => {
           if (stage.count <= 0) return null;
-          const widthPct = Math.max(2, (stage.count / (totalLeads || 1)) * 100);
+          const palette = STAGE_PALETTE[stage.status];
+          const barColor = palette?.color || stage.color;
+          const widthPct = Math.max(3, (stage.count / (totalLeads || 1)) * 100);
           return (
             <div
               key={stage.status}
               style={{
                 width: `${widthPct}%`,
-                backgroundColor: stage.color,
+                backgroundColor: barColor,
               }}
-              className="h-full rounded-xs transition-all duration-300 hover:opacity-90"
-              title={`${stage.label}: ${stage.count} (${stage.percentage}%)`}
+              className="h-full rounded-full transition-all duration-300 hover:opacity-90"
+              title={`${palette?.label || stage.label}: ${stage.count} (${stage.percentage}%)`}
             />
           );
         })}
       </div>
 
-      {/* Stage Grid Cards */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3">
-        {stages.map((stage) => (
-          <Link
-            key={stage.status}
-            href={`/admin/leads?status=${stage.status}`}
-            className="flex flex-col p-3 rounded-xl bg-surface-muted/60 border border-border-light hover:border-primary-200 hover:bg-surface transition-all group"
-          >
-            <div className="flex items-center gap-1.5 mb-1.5">
-              <span
-                className="w-2 h-2 rounded-full shrink-0"
-                style={{ backgroundColor: stage.color }}
-              />
-              <span className="text-xs font-medium text-text-secondary truncate group-hover:text-text-primary">
-                {stage.label}
-              </span>
-            </div>
-            <div className="flex items-baseline justify-between mt-auto">
-              <span className="text-lg font-bold text-text-primary tabular-nums">
-                {formatNumber(stage.count)}
-              </span>
-              <span className="text-[11px] font-medium text-text-muted">
-                {stage.percentage}%
-              </span>
-            </div>
-          </Link>
-        ))}
+      {/* Color-Coded Stage Grid Cards */}
+      <div
+        className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6"
+        style={{ gap: '14px' }}
+      >
+        {stages.map((stage) => {
+          const palette = STAGE_PALETTE[stage.status] || {
+            color: stage.color,
+            bg: '#F8FAFB',
+            border: '#E7EAEE',
+            text: '#20252D',
+            label: stage.label,
+          };
+
+          return (
+            <Link
+              key={stage.status}
+              href={`/admin/leads?status=${stage.status}`}
+              className="flex flex-col rounded-xl transition-all group hover:shadow-sm"
+              style={{
+                padding: '16px',
+                backgroundColor: palette.bg,
+                border: `1px solid ${palette.border}`,
+                borderLeft: `4px solid ${palette.color}`,
+                gap: '10px',
+              }}
+            >
+              <div className="flex items-center" style={{ gap: '8px' }}>
+                <span
+                  className="w-2.5 h-2.5 rounded-full shrink-0"
+                  style={{ backgroundColor: palette.color }}
+                />
+                <span
+                  className="text-[12.5px] font-bold truncate"
+                  style={{ color: palette.text }}
+                >
+                  {palette.label}
+                </span>
+              </div>
+              <div className="flex items-baseline justify-between mt-auto">
+                <span className="text-[22px] font-bold text-text-primary tabular-nums leading-none">
+                  {formatNumber(stage.count)}
+                </span>
+                <span
+                  className="text-[11.5px] font-bold rounded-full tabular-nums"
+                  style={{
+                    padding: '2px 7px',
+                    backgroundColor: '#FFFFFF',
+                    color: palette.text,
+                    border: `1px solid ${palette.border}`,
+                  }}
+                >
+                  {stage.percentage}%
+                </span>
+              </div>
+            </Link>
+          );
+        })}
       </div>
     </div>
   );

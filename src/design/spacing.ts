@@ -28,15 +28,16 @@ export const radius = {
 
 export const layout = {
   sidebar: {
-    expanded: '248px',
-    collapsed: '76px',
+    expanded: '240px',
+    collapsed: '72px',
   },
   topbar: {
     height: '64px',
   },
   content: {
-    padding: '28px',
-    paddingLarge: '32px',
+    paddingX: '32px',
+    paddingY: '28px',
+    sectionGap: '24px',
     maxWidth: '1600px',
   },
 } as const;

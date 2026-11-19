@@ -1,19 +1,29 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import {
   UserPlus,
-  Users,
-  Layers,
-  CheckCircle2,
-  AlertCircle,
   ArrowRight,
   Shuffle,
-  ShieldCheck,
   Scale,
+  AlertCircle,
+  ExternalLink,
+  Zap,
 } from 'lucide-react';
+import {
+  AdminPageContainer,
+  PageHeader,
+  PageCard,
+  PageCardHeader,
+  DataTable,
+  DataTableRow,
+  DataTableCell,
+  SuccessNotice,
+} from '@/components/common';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import {
   Select,
   SelectContent,
@@ -21,7 +31,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Checkbox } from '@/components/ui/checkbox';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { getInitials, formatNumber } from '@/lib/utils';
 
@@ -29,131 +38,211 @@ interface RepWorkload {
   id: string;
   name: string;
   empId: string;
+  department?: string;
   activeLeads: number;
+  pendingLeads: number;
+  callsMade: number;
   confirmedDeals: number;
   conversionRate: number;
 }
 
 export default function AdminAssignmentsPage() {
-  const [reps, setReps] = useState<RepWorkload[]>([
-    { id: 'emp-1', name: 'Priya Sharma', empId: 'EMP1001', activeLeads: 48, confirmedDeals: 18, conversionRate: 15.0 },
-    { id: 'emp-2', name: 'Vikram Patel', empId: 'EMP1002', activeLeads: 54, confirmedDeals: 14, conversionRate: 12.7 },
-    { id: 'emp-3', name: 'Rahul Varma', empId: 'EMP1003', activeLeads: 36, confirmedDeals: 11, conversionRate: 11.5 },
-    { id: 'emp-4', name: 'Ananya Roy', empId: 'EMP1004', activeLeads: 28, confirmedDeals: 8, conversionRate: 10.0 },
-  ]);
-
-  const [selectedRep, setSelectedRep] = useState<string>('emp-1');
+  const router = useRouter();
+  const [reps, setReps] = useState<RepWorkload[]>([]);
+  const [selectedRep, setSelectedRep] = useState<string>('');
   const [distributionMode, setDistributionMode] = useState<'single' | 'round_robin' | 'workload'>('workload');
-  const [unassignedCount, setUnassignedCount] = useState(4130);
-  const [assignCount, setAssignCount] = useState('50');
+  const [unassignedCount, setUnassignedCount] = useState(0);
+  const [assignCount, setAssignCount] = useState('100');
+  const [assignAllFlag, setAssignAllFlag] = useState(false);
   const [assigning, setAssigning] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
+  const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
-  const handleExecuteAssignment = (e: React.FormEvent) => {
-    e.preventDefault();
-    const count = parseInt(assignCount, 10);
-    if (!count || count <= 0) return;
+  const fetchWorkloadData = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/leads/assign');
+      const data = await res.json();
+      setUnassignedCount(data.unassignedCount || 0);
+      setReps(data.reps || []);
+      if (data.reps?.length > 0 && !selectedRep) {
+        setSelectedRep(data.reps[0].id);
+      }
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorkloadData();
+  }, []);
+
+  const executeAssignment = async (
+    modeOverride?: 'single' | 'round_robin' | 'workload',
+    repOverride?: string,
+    qtyOverride?: number,
+    allOverride?: boolean
+  ) => {
+    const modeToUse = modeOverride || distributionMode;
+    const repToUse = repOverride || selectedRep;
+    const isAll = allOverride !== undefined ? allOverride : assignAllFlag;
+    const countToUse =
+      qtyOverride !== undefined
+        ? qtyOverride
+        : isAll
+        ? unassignedCount
+        : parseInt(assignCount, 10);
+
+    if (!isAll && (!countToUse || countToUse <= 0)) return;
 
     setAssigning(true);
-    setTimeout(() => {
-      setAssigning(false);
-      setUnassignedCount((prev) => Math.max(0, prev - count));
+    setSuccessNotice(null);
+    setErrorNotice(null);
 
-      if (distributionMode === 'single') {
-        const repName = reps.find((r) => r.id === selectedRep)?.name || 'Employee';
-        setReps((prev) =>
-          prev.map((r) => (r.id === selectedRep ? { ...r, activeLeads: r.activeLeads + count } : r))
-        );
-        setSuccessNotice(`Successfully allocated ${count} leads directly to ${repName}.`);
-      } else {
-        const perRep = Math.floor(count / reps.length);
-        setReps((prev) => prev.map((r) => ({ ...r, activeLeads: r.activeLeads + perRep })));
-        setSuccessNotice(
-          `Successfully distributed ${count} leads evenly among ${reps.length} sales representatives.`
-        );
+    try {
+      const res = await fetch('/api/leads/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          mode: modeToUse,
+          employeeId: repToUse,
+          count: countToUse,
+          assignAll: isAll,
+        }),
+      });
+
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to distribute leads');
       }
-    }, 600);
+
+      setSuccessNotice(data.message);
+      await fetchWorkloadData();
+    } catch (err: any) {
+      setErrorNotice(err.message || 'Lead allocation failed');
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const handleExecuteAssignment = async (e: React.FormEvent) => {
+    e.preventDefault();
+    await executeAssignment();
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-          Lead Distribution & Workload Balancing
-        </h1>
-        <p className="text-xs text-text-muted mt-1">
-          Distribute unassigned leads individually, in bulk round-robin, or via workload-balanced allocation.
-        </p>
-      </div>
+    <AdminPageContainer>
+      <PageHeader
+        title="Bulk Lead Distribution & Workload Balancing"
+        description="Simple high-volume lead allocation: assign hundreds or thousands of leads to a specific representative or split them automatically across your entire team."
+        actions={
+          unassignedCount > 0 && reps.length > 0 ? (
+            <Button
+              onClick={() => executeAssignment('round_robin', undefined, unassignedCount, true)}
+              disabled={assigning}
+            >
+              <Zap className="w-4 h-4" />
+              <span>
+                Split All {formatNumber(unassignedCount)} Unassigned Leads Equally
+              </span>
+            </Button>
+          ) : undefined
+        }
+      />
 
-      {successNotice && (
-        <div className="flex items-center gap-2.5 p-4 rounded-xl bg-success-bg border border-success/30 text-success text-xs font-semibold animate-in fade-in-50">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{successNotice}</span>
+      {successNotice && <SuccessNotice message={successNotice} />}
+
+      {errorNotice && (
+        <div
+          className="flex items-center gap-3 rounded-xl bg-danger-bg border border-danger/30 text-danger text-[13px] font-semibold"
+          style={{ padding: '14px 18px' }}
+        >
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>{errorNotice}</span>
         </div>
       )}
 
       {/* Top Stats Cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-        <div className="p-5 rounded-2xl bg-surface border border-border shadow-xs">
-          <span className="text-xs font-medium text-text-secondary">Unassigned Leads Available</span>
+      <div className="grid grid-cols-1 sm:grid-cols-3" style={{ gap: '20px' }}>
+        <PageCard style={{ borderTop: '3.5px solid #6366F1' }}>
+          <span className="text-[13px] font-semibold text-text-secondary">
+            Unassigned Leads Ready to Allocate
+          </span>
           <div className="mt-2 text-3xl font-bold text-primary-700 tabular-nums">
             {formatNumber(unassignedCount)}
           </div>
-          <span className="text-[11px] text-text-muted mt-1 block">Awaiting allocation to sales pipeline</span>
-        </div>
+          <span className="text-[13px] text-text-muted mt-1.5 block">
+            Available in pool for instant bulk distribution
+          </span>
+        </PageCard>
 
-        <div className="p-5 rounded-2xl bg-surface border border-border shadow-xs">
-          <span className="text-xs font-medium text-text-secondary">Active Sales Representatives</span>
+        <PageCard style={{ borderTop: '3.5px solid #147D72' }}>
+          <span className="text-[13px] font-semibold text-text-secondary">
+            Active Sales Representatives
+          </span>
           <div className="mt-2 text-3xl font-bold text-text-primary tabular-nums">
             {reps.length}
           </div>
-          <span className="text-[11px] text-text-muted mt-1 block">Eligible to receive lead allocations</span>
-        </div>
+          <span className="text-[13px] text-text-muted mt-1.5 block">
+            Click any representative below to view their daily work log
+          </span>
+        </PageCard>
 
-        <div className="p-5 rounded-2xl bg-surface border border-border shadow-xs">
-          <span className="text-xs font-medium text-text-secondary">Self-Selection Lead Pool</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold text-success tabular-nums">Active</span>
-            <span className="text-[11px] bg-success-bg text-success px-2 py-0.5 rounded-full font-semibold">
-              Enabled
-            </span>
+        <PageCard style={{ borderTop: '3.5px solid #10B981' }}>
+          <span className="text-[13px] font-semibold text-text-secondary">
+            Equal Share Per Representative
+          </span>
+          <div className="mt-2 text-3xl font-bold text-success tabular-nums">
+            {reps.length > 0 ? formatNumber(Math.floor(unassignedCount / reps.length)) : 0}
           </div>
-          <span className="text-[11px] text-text-muted mt-1 block">Atomic claiming enabled for sales team</span>
-        </div>
+          <span className="text-[13px] text-text-muted mt-1.5 block">
+            Leads per rep if all {formatNumber(unassignedCount)} unassigned are split equally
+          </span>
+        </PageCard>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3" style={{ gap: '24px' }}>
         {/* Allocation Form */}
-        <div className="bg-surface p-6 rounded-2xl border border-border shadow-xs space-y-5">
-          <h2 className="text-sm font-semibold text-text-primary border-b border-border-light pb-2.5 flex items-center gap-2">
-            <UserPlus className="w-4 h-4 text-primary-600" />
-            <span>Lead Allocation Engine</span>
-          </h2>
+        <PageCard>
+          <PageCardHeader
+            title="High-Volume Lead Allocator"
+            description="Choose strategy and enter any quantity"
+            icon={UserPlus}
+          />
 
-          <form onSubmit={handleExecuteAssignment} className="space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-primary">
-                Distribution Strategy
+          <form
+            onSubmit={handleExecuteAssignment}
+            style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label className="text-[13px] font-semibold text-text-primary block">
+                1. Distribution Strategy
               </label>
-              <div className="grid grid-cols-3 gap-2">
+              <div className="grid grid-cols-3" style={{ gap: '10px' }}>
                 {[
                   { id: 'workload', label: 'Balanced', icon: Scale },
-                  { id: 'round_robin', label: 'Equal', icon: Shuffle },
-                  { id: 'single', label: 'Direct', icon: UserPlus },
+                  { id: 'round_robin', label: 'Equal Split', icon: Shuffle },
+                  { id: 'single', label: 'Single Rep', icon: UserPlus },
                 ].map((mode) => {
                   const Icon = mode.icon;
+                  const isSelected = distributionMode === mode.id;
                   return (
                     <button
                       key={mode.id}
                       type="button"
                       onClick={() => setDistributionMode(mode.id as any)}
-                      className={`p-2.5 rounded-xl border text-xs font-medium flex flex-col items-center justify-center gap-1.5 transition-all ${
-                        distributionMode === mode.id
-                          ? 'bg-primary-50 text-primary-700 border-primary-300 shadow-2xs font-semibold'
-                          : 'bg-surface-muted text-text-secondary border-border hover:bg-surface'
-                      }`}
+                      className="rounded-xl border text-[13px] font-medium flex flex-col items-center justify-center transition-all cursor-pointer"
+                      style={{
+                        padding: '14px 10px',
+                        gap: '6px',
+                        backgroundColor: isSelected ? '#E8F3F1' : '#F8FAFB',
+                        color: isSelected ? '#0E5F58' : '#68717D',
+                        borderColor: isSelected ? '#24988A' : '#E7EAEE',
+                        fontWeight: isSelected ? 700 : 500,
+                      }}
                     >
                       <Icon className="w-4 h-4" />
                       <span>{mode.label}</span>
@@ -164,13 +253,16 @@ export default function AdminAssignmentsPage() {
             </div>
 
             {distributionMode === 'single' && (
-              <div className="space-y-1.5">
-                <label className="text-xs font-medium text-text-primary">
-                  Select Sales Representative
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                <label className="text-[13px] font-semibold text-text-primary block">
+                  2. Select Sales Representative
                 </label>
-                <Select value={selectedRep} onValueChange={(val) => setSelectedRep(val || '')}>
-                  <SelectTrigger className="text-xs">
-                    <SelectValue placeholder="Choose rep" />
+                <Select
+                  value={selectedRep}
+                  onValueChange={(val) => setSelectedRep(val || '')}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Choose sales representative" />
                   </SelectTrigger>
                   <SelectContent>
                     {reps.map((r) => (
@@ -183,111 +275,178 @@ export default function AdminAssignmentsPage() {
               </div>
             )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-primary">
-                Batch Size (Number of Leads to Allocate)
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <label className="text-[13px] font-semibold text-text-primary block">
+                {distributionMode === 'single' ? '3.' : '2.'} Quick Batch Quantity Presets
               </label>
-              <div className="grid grid-cols-4 gap-2">
-                {['25', '50', '100', '250'].map((val) => (
-                  <button
-                    key={val}
-                    type="button"
-                    onClick={() => setAssignCount(val)}
-                    className={`py-1.5 rounded-lg border text-xs font-semibold tabular-nums transition-colors ${
-                      assignCount === val
-                        ? 'bg-primary-600 text-white border-primary-600'
-                        : 'bg-surface-muted text-text-secondary border-border hover:bg-surface'
-                    }`}
-                  >
-                    {val}
-                  </button>
-                ))}
+              <div className="grid grid-cols-3" style={{ gap: '8px' }}>
+                {[
+                  { label: '50', val: '50', isAll: false },
+                  { label: '100', val: '100', isAll: false },
+                  { label: '250', val: '250', isAll: false },
+                  { label: '500', val: '500', isAll: false },
+                  { label: '1,000', val: '1000', isAll: false },
+                  {
+                    label: `All (${formatNumber(unassignedCount)})`,
+                    val: String(unassignedCount || 100),
+                    isAll: true,
+                  },
+                ].map((preset) => {
+                  const isActive = preset.isAll
+                    ? assignAllFlag
+                    : !assignAllFlag && assignCount === preset.val;
+                  return (
+                    <button
+                      key={preset.label}
+                      type="button"
+                      onClick={() => {
+                        setAssignAllFlag(preset.isAll);
+                        setAssignCount(preset.val);
+                      }}
+                      className="rounded-xl border text-[12.5px] font-bold tabular-nums transition-colors cursor-pointer"
+                      style={{
+                        padding: '10px 6px',
+                        backgroundColor: isActive ? '#147D72' : '#F8FAFB',
+                        color: isActive ? '#FFFFFF' : '#525B68',
+                        borderColor: isActive ? '#147D72' : '#E7EAEE',
+                      }}
+                    >
+                      {preset.label}
+                    </button>
+                  );
+                })}
               </div>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label className="text-[13px] font-semibold text-text-primary block">
+                Or Enter Custom Number of Leads
+              </label>
+              <Input
+                type="number"
+                min={1}
+                placeholder="Type any exact number (e.g. 180, 450, 925)..."
+                value={assignAllFlag ? unassignedCount : assignCount}
+                onChange={(e) => {
+                  setAssignAllFlag(false);
+                  setAssignCount(e.target.value);
+                }}
+              />
             </div>
 
             <Button
               type="submit"
-              disabled={assigning || unassignedCount === 0}
-              className="w-full text-xs bg-primary-600 hover:bg-primary-700 text-white h-10 mt-2 shadow-xs"
+              disabled={assigning || unassignedCount === 0 || reps.length === 0}
+              className="w-full h-11 rounded-xl"
             >
               {assigning ? (
-                <span>Executing Batch Distribution...</span>
+                <span>Allocating Leads in Database...</span>
               ) : (
-                <span className="flex items-center gap-1.5">
-                  <span>Allocate {assignCount} Leads Now</span>
-                  <ArrowRight className="w-3.5 h-3.5" />
+                <span className="flex items-center justify-center gap-2">
+                  <span>
+                    Allocate{' '}
+                    {assignAllFlag
+                      ? `All ${formatNumber(unassignedCount)}`
+                      : formatNumber(
+                          Math.min(
+                            Number(assignCount) || 0,
+                            unassignedCount || Number(assignCount) || 0
+                          )
+                        )}{' '}
+                    Leads Now
+                  </span>
+                  <ArrowRight className="w-4 h-4" />
                 </span>
               )}
             </Button>
           </form>
-        </div>
+        </PageCard>
 
         {/* Current Workloads Table */}
-        <div className="lg:col-span-2 bg-surface p-6 rounded-2xl border border-border shadow-xs">
-          <h2 className="text-sm font-semibold text-text-primary mb-4 flex items-center justify-between">
-            <span>Sales Representative Workloads & Capacity</span>
-            <span className="text-[11px] text-text-muted font-normal">Real-time capacity tracking</span>
-          </h2>
-
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-surface-muted border-b border-border text-text-secondary font-semibold">
-                <tr>
-                  <th className="py-2.5 px-3">Sales Rep</th>
-                  <th className="py-2.5 px-3 text-center">Active Queue</th>
-                  <th className="py-2.5 px-3 text-center">Confirmed Deals</th>
-                  <th className="py-2.5 px-3 text-center">Conversion</th>
-                  <th className="py-2.5 px-3">Workload Bar</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-border-light">
-                {reps.map((rep) => {
-                  const pct = Math.min(100, Math.round((rep.activeLeads / 80) * 100));
-                  return (
-                    <tr key={rep.id} className="hover:bg-surface-muted/50 transition-colors">
-                      <td className="py-3 px-3">
-                        <div className="flex items-center gap-2">
-                          <Avatar className="h-7 w-7 border border-border">
-                            <AvatarFallback className="bg-primary-50 text-primary-700 text-[10px] font-bold">
-                              {getInitials(rep.name)}
-                            </AvatarFallback>
-                          </Avatar>
-                          <div className="flex flex-col">
-                            <span className="font-semibold text-text-primary">{rep.name}</span>
-                            <span className="text-[10px] text-text-muted">{rep.empId}</span>
-                          </div>
-                        </div>
-                      </td>
-                      <td className="py-3 px-3 text-center font-bold text-text-primary tabular-nums">
-                        {rep.activeLeads}
-                      </td>
-                      <td className="py-3 px-3 text-center text-success font-bold tabular-nums">
-                        {rep.confirmedDeals}
-                      </td>
-                      <td className="py-3 px-3 text-center tabular-nums text-text-secondary font-medium">
-                        {rep.conversionRate}%
-                      </td>
-                      <td className="py-3 px-3 w-40">
-                        <div className="space-y-1">
-                          <div className="h-2 w-full bg-surface-muted rounded-full overflow-hidden border border-border">
-                            <div
-                              className="h-full bg-primary-600 rounded-full"
-                              style={{ width: `${pct}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-text-muted block text-right">
-                            {pct}% capacity
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+        <div className="lg:col-span-2">
+          <DataTable
+            headers={[
+              { label: 'Sales Representative (Click for Daily Profile)' },
+              { label: 'Assigned', align: 'center' },
+              { label: 'Pending', align: 'center' },
+              { label: 'Calls Made', align: 'center' },
+              { label: 'Confirmed', align: 'center' },
+              { label: 'Quick Assign', align: 'right' },
+            ]}
+            isEmpty={!loading && reps.length === 0}
+            emptyState={
+              <span className="text-sm text-text-muted">
+                No active sales representatives found. Add an employee in the Sales Team directory.
+              </span>
+            }
+          >
+            {reps.map((rep) => (
+              <DataTableRow
+                key={rep.id}
+                onClick={() => router.push(`/admin/employees/${rep.id}`)}
+              >
+                <DataTableCell>
+                  <div className="flex items-center" style={{ gap: '12px' }}>
+                    <Avatar className="h-9 w-9 border border-border">
+                      <AvatarFallback className="bg-primary-50 text-primary-700 text-xs font-bold">
+                        {getInitials(rep.name)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex flex-col">
+                      <Link
+                        href={`/admin/employees/${rep.id}`}
+                        onClick={(e) => e.stopPropagation()}
+                        className="font-bold text-text-primary hover:text-primary-600 text-[13.5px] flex items-center gap-1.5"
+                      >
+                        <span>{rep.name}</span>
+                        <ExternalLink className="w-3 h-3 text-text-muted" />
+                      </Link>
+                      <span className="text-[12px] text-text-muted">
+                        {rep.empId} • {rep.department || 'Sales'}
+                      </span>
+                    </div>
+                  </div>
+                </DataTableCell>
+                <DataTableCell align="center" className="font-bold text-text-primary tabular-nums text-[14px]">
+                  {formatNumber(rep.activeLeads)}
+                </DataTableCell>
+                <DataTableCell align="center" className="font-bold text-warning tabular-nums text-[14px]">
+                  {formatNumber(rep.pendingLeads)}
+                </DataTableCell>
+                <DataTableCell align="center" className="font-bold text-accent-blue tabular-nums text-[14px]">
+                  {formatNumber(rep.callsMade)}
+                </DataTableCell>
+                <DataTableCell align="center" className="text-success font-bold tabular-nums text-[14px]">
+                  {formatNumber(rep.confirmedDeals)} ({rep.conversionRate}%)
+                </DataTableCell>
+                <DataTableCell align="right">
+                  <div
+                    className="flex items-center justify-end"
+                    style={{ gap: '6px' }}
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <Button
+                      size="xs"
+                      variant="outline"
+                      disabled={assigning || unassignedCount === 0}
+                      onClick={() => executeAssignment('single', rep.id, 100, false)}
+                    >
+                      +100 Leads
+                    </Button>
+                    <Button
+                      size="xs"
+                      variant="default"
+                      onClick={() => router.push(`/admin/employees/${rep.id}`)}
+                    >
+                      Profile
+                    </Button>
+                  </div>
+                </DataTableCell>
+              </DataTableRow>
+            ))}
+          </DataTable>
         </div>
       </div>
-    </div>
+    </AdminPageContainer>
   );
 }

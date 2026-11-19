@@ -2,11 +2,9 @@
 
 import React, { useState } from 'react';
 import {
-  FileText,
   Download,
-  Filter,
-  Calendar,
   CheckCircle2,
+  FileText,
   FileSpreadsheet,
   Clock,
   Briefcase,
@@ -20,6 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
+import { AdminPageContainer, PageHeader, PageCard, PageCardHeader, SuccessNotice } from '@/components/common';
 
 export default function AdminReportsPage() {
   const [reportType, setReportType] = useState('all_leads');
@@ -59,36 +58,24 @@ export default function AdminReportsPage() {
   };
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-          Reports & Data Export Center
-        </h1>
-        <p className="text-xs text-text-muted mt-1">
-          Export structured lead registries, performance statistics, and telecalling outcomes in Excel (.xlsx) and CSV format.
-        </p>
-      </div>
+    <AdminPageContainer>
+      <PageHeader
+        title="Reports & Data Export Center"
+        description="Export structured lead registries, performance statistics, and telecalling outcomes in Excel (.xlsx) and CSV format."
+      />
 
-      {notice && (
-        <div className="flex items-center gap-2.5 p-4 rounded-xl bg-success-bg border border-success/30 text-success text-xs font-semibold animate-in fade-in-50">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>{notice}</span>
-        </div>
-      )}
+      {notice && <SuccessNotice message={notice} />}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Export Form */}
-        <div className="bg-surface p-6 rounded-2xl border border-border shadow-xs space-y-5">
-          <h2 className="text-sm font-semibold text-text-primary border-b border-border-light pb-2.5 flex items-center gap-2">
-            <Download className="w-4 h-4 text-primary-600" />
-            <span>Generate Custom Export</span>
-          </h2>
+        <PageCard>
+          <PageCardHeader title="Generate Custom Export" icon={Download} />
 
           <form onSubmit={handleExport} className="space-y-4">
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-primary">Report Dataset</label>
+              <label className="text-[13px] font-semibold text-text-primary">Report Dataset</label>
               <Select value={reportType} onValueChange={(val) => setReportType(val || 'all_leads')}>
-                <SelectTrigger className="text-xs">
+                <SelectTrigger className="text-[13px] h-11 rounded-xl">
                   <SelectValue placeholder="Choose Report" />
                 </SelectTrigger>
                 <SelectContent>
@@ -104,9 +91,9 @@ export default function AdminReportsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-primary">Status Filter</label>
+              <label className="text-[13px] font-semibold text-text-primary">Status Filter</label>
               <Select value={statusFilter} onValueChange={(val) => setStatusFilter(val || 'all')}>
-                <SelectTrigger className="text-xs">
+                <SelectTrigger className="text-[13px] h-11 rounded-xl">
                   <SelectValue placeholder="Filter Status" />
                 </SelectTrigger>
                 <SelectContent>
@@ -121,8 +108,8 @@ export default function AdminReportsPage() {
             </div>
 
             <div className="space-y-1.5">
-              <label className="text-xs font-medium text-text-primary">Export Format</label>
-              <div className="grid grid-cols-2 gap-2">
+              <label className="text-[13px] font-semibold text-text-primary">Export Format</label>
+              <div className="grid grid-cols-2 gap-2.5">
                 {[
                   { id: 'csv', label: 'CSV (.csv)', icon: FileText },
                   { id: 'excel', label: 'Excel (.xlsx)', icon: FileSpreadsheet },
@@ -133,9 +120,9 @@ export default function AdminReportsPage() {
                       key={fmt.id}
                       type="button"
                       onClick={() => setFormat(fmt.id)}
-                      className={`p-2.5 rounded-xl border text-xs font-semibold flex items-center justify-center gap-2 transition-all ${
+                      className={`p-3 rounded-xl border text-[13px] font-semibold flex items-center justify-center gap-2 transition-all ${
                         format === fmt.id
-                          ? 'bg-primary-50 text-primary-700 border-primary-300'
+                          ? 'bg-primary-50 text-primary-700 border-primary-300 shadow-xs'
                           : 'bg-surface-muted text-text-secondary border-border hover:bg-surface'
                       }`}
                     >
@@ -150,21 +137,21 @@ export default function AdminReportsPage() {
             <Button
               type="submit"
               disabled={downloading}
-              className="w-full text-xs bg-primary-600 hover:bg-primary-700 text-white h-10 mt-2 shadow-xs"
+              className="w-full text-[13px] font-semibold bg-primary-600 hover:bg-primary-700 text-white h-11 mt-3 rounded-xl shadow-xs"
             >
               <Download className="w-3.5 h-3.5 mr-1.5" />
               <span>{downloading ? 'Compiling Dataset...' : 'Download Export File'}</span>
             </Button>
           </form>
-        </div>
+        </PageCard>
 
         {/* Quick Download Cards */}
-        <div className="lg:col-span-2 space-y-4">
-          <h2 className="text-sm font-semibold text-text-primary">
+        <div className="lg:col-span-2 space-y-6">
+          <h2 className="text-[15px] font-semibold text-text-primary">
             Standard System Reports
           </h2>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
             {[
               {
                 title: 'Full Leads Database',
@@ -193,19 +180,16 @@ export default function AdminReportsPage() {
             ].map((rep, idx) => {
               const Icon = rep.icon;
               return (
-                <div
-                  key={idx}
-                  className="p-5 rounded-2xl bg-surface border border-border shadow-xs hover:border-primary-200 transition-all flex flex-col justify-between"
-                >
+                <PageCard key={idx} hover className="flex flex-col justify-between min-h-[180px]">
                   <div>
-                    <div className="w-8 h-8 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center mb-3">
-                      <Icon className="w-4 h-4" />
+                    <div className="w-10 h-10 rounded-xl bg-primary-50 text-primary-600 flex items-center justify-center mb-3.5 shadow-xs">
+                      <Icon className="w-5 h-5" />
                     </div>
-                    <h3 className="text-xs font-bold text-text-primary">{rep.title}</h3>
-                    <p className="text-[11px] text-text-muted mt-1 leading-relaxed">{rep.desc}</p>
+                    <h3 className="text-sm font-bold text-text-primary">{rep.title}</h3>
+                    <p className="text-[13px] text-text-muted mt-1 leading-relaxed">{rep.desc}</p>
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-border-light flex justify-end">
+                  <div className="mt-5 pt-3.5 border-t border-border-light flex justify-end">
                     <Button
                       size="sm"
                       variant="outline"
@@ -213,18 +197,18 @@ export default function AdminReportsPage() {
                         setReportType(rep.type);
                         setNotice(`Ready to export "${rep.title}". Click Download Export File.`);
                       }}
-                      className="text-xs h-7 text-primary-700 hover:bg-primary-50 border-primary-200"
+                      className="text-[13px] h-9 px-4 rounded-xl text-primary-700 hover:bg-primary-50 border-primary-200 font-semibold"
                     >
-                      <Download className="w-3 h-3 mr-1" />
+                      <Download className="w-3.5 h-3.5 mr-1.5" />
                       <span>Select Report</span>
                     </Button>
                   </div>
-                </div>
+                </PageCard>
               );
             })}
           </div>
         </div>
       </div>
-    </div>
+    </AdminPageContainer>
   );
 }

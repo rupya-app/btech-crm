@@ -1,4 +1,4 @@
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getDbClient, createServerSupabaseClient, getCachedOrFetch } from '@/lib/supabase/server';
 import { EmployeePerformance } from '@/types';
 
 export interface AdminKPIs {
@@ -8,6 +8,7 @@ export interface AdminKPIs {
   newLeads: number;
   contactedLeads: number;
   interestedLeads: number;
+  followUpLeads: number;
   pendingLeads: number;
   confirmedLeads: number;
   notInterestedLeads: number;
@@ -25,71 +26,97 @@ export interface PipelineStage {
 }
 
 export async function getAdminKPIs(): Promise<AdminKPIs> {
-  try {
-    const supabase = await createServerSupabaseClient();
+  return getCachedOrFetch('admin_kpis', 15000, async () => {
+    try {
+    const supabase = await getDbClient();
 
-    // Query counts directly from database
+    const endOfToday = new Date();
+    endOfToday.setHours(23, 59, 59, 999);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
     const [
-      leadsRes,
-      assignedRes,
-      confirmedRes,
-      interestedRes,
-      pendingRes,
-      contactedRes,
-      newRes,
-      notInterestedRes,
-      employeesRes,
-      dueTodayRes,
-      overdueRes,
+      { data: allLeads },
+      { data: activeAssignments },
+      { count: employeesCount },
+      { data: activeFollowUps },
     ] = await Promise.all([
-      supabase.from('leads').select('*', { count: 'exact', head: true }),
-      supabase.from('lead_assignments').select('*', { count: 'exact', head: true }).eq('is_active', true),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'confirmed'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'interested'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'pending'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'contacted'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'new'),
-      supabase.from('leads').select('*', { count: 'exact', head: true }).eq('status', 'not_interested'),
-      supabase.from('profiles').select('*', { count: 'exact', head: true }).eq('role', 'employee').eq('is_active', true),
-      supabase.from('follow_ups').select('*', { count: 'exact', head: true }).eq('status', 'scheduled').lte('scheduled_at', new Date(new Date().setHours(23, 59, 59, 999)).toISOString()).gte('scheduled_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
-      supabase.from('follow_ups').select('*', { count: 'exact', head: true }).eq('status', 'scheduled').lt('scheduled_at', new Date().toISOString()),
+      supabase.from('leads').select('id, status'),
+      supabase.from('lead_assignments').select('lead_id').eq('is_active', true),
+      supabase
+        .from('profiles')
+        .select('*', { count: 'exact', head: true })
+        .eq('role', 'employee')
+        .eq('is_active', true),
+      supabase
+        .from('follow_ups')
+        .select('id, scheduled_at, status')
+        .neq('status', 'completed')
+        .neq('status', 'cancelled'),
     ]);
 
-    const totalLeads = leadsRes.count ?? 8;
-    const assignedLeads = assignedRes.count ?? 5;
-    const unassignedLeads = Math.max(0, totalLeads - assignedLeads);
+    const leads = allLeads || [];
+    const assignedSet = new Set((activeAssignments || []).map((a: any) => a.lead_id));
+
+    const totalLeads = leads.length;
+    const assignedLeads = leads.filter((l: any) => assignedSet.has(l.id)).length;
+    const unassignedLeads = leads.filter(
+      (l: any) => !assignedSet.has(l.id) && l.status !== 'archived' && l.status !== 'unqualified'
+    ).length;
+
+    const countByStatus = (st: string) => leads.filter((l: any) => l.status === st).length;
+
+    const nowMs = Date.now();
+    const startMs = startOfToday.getTime();
+    const endMs = endOfToday.getTime();
+
+    let followUpsDueToday = 0;
+    let overdueFollowUps = 0;
+
+    (activeFollowUps || []).forEach((f: any) => {
+      const t = new Date(f.scheduled_at).getTime();
+      if (f.status === 'overdue' || t < nowMs) {
+        overdueFollowUps += 1;
+      }
+      if ((t >= startMs && t <= endMs) || f.status === 'due_today' || t < nowMs) {
+        followUpsDueToday += 1;
+      }
+    });
 
     return {
       totalLeads,
       assignedLeads,
       unassignedLeads,
-      newLeads: newRes.count ?? 2,
-      contactedLeads: contactedRes.count ?? 1,
-      interestedLeads: interestedRes.count ?? 2,
-      pendingLeads: pendingRes.count ?? 1,
-      confirmedLeads: confirmedRes.count ?? 1,
-      notInterestedLeads: notInterestedRes.count ?? 0,
-      followUpsDueToday: dueTodayRes.count ?? 3,
-      overdueFollowUps: overdueRes.count ?? 1,
-      totalEmployees: employeesRes.count ?? 4,
+      newLeads: countByStatus('new'),
+      contactedLeads: countByStatus('contacted'),
+      interestedLeads: countByStatus('interested'),
+      followUpLeads: countByStatus('follow_up'),
+      pendingLeads: countByStatus('pending'),
+      confirmedLeads: countByStatus('confirmed'),
+      notInterestedLeads: countByStatus('not_interested'),
+      followUpsDueToday,
+      overdueFollowUps,
+      totalEmployees: employeesCount ?? 0,
     };
   } catch (err) {
-    // Realistic fallback for demonstration
+    console.error('getAdminKPIs error:', err);
     return {
-      totalLeads: 12450,
-      assignedLeads: 8320,
-      unassignedLeads: 4130,
-      newLeads: 2450,
-      contactedLeads: 3120,
-      interestedLeads: 1840,
-      pendingLeads: 960,
-      confirmedLeads: 740,
-      notInterestedLeads: 1340,
-      followUpsDueToday: 18,
-      overdueFollowUps: 4,
-      totalEmployees: 12,
+      totalLeads: 0,
+      assignedLeads: 0,
+      unassignedLeads: 0,
+      newLeads: 0,
+      contactedLeads: 0,
+      interestedLeads: 0,
+      followUpLeads: 0,
+      pendingLeads: 0,
+      confirmedLeads: 0,
+      notInterestedLeads: 0,
+      followUpsDueToday: 0,
+      overdueFollowUps: 0,
+      totalEmployees: 0,
     };
   }
+  });
 }
 
 export async function getPipelineDistribution(): Promise<PipelineStage[]> {
@@ -97,104 +124,309 @@ export async function getPipelineDistribution(): Promise<PipelineStage[]> {
   const total = kpis.totalLeads || 1;
 
   return [
-    { status: 'new', label: 'New', count: kpis.newLeads, percentage: Math.round((kpis.newLeads / total) * 100), color: '#4778C7' },
-    { status: 'contacted', label: 'Contacted', count: kpis.contactedLeads, percentage: Math.round((kpis.contactedLeads / total) * 100), color: '#5279C7' },
-    { status: 'interested', label: 'Interested', count: kpis.interestedLeads, percentage: Math.round((kpis.interestedLeads / total) * 100), color: '#24988A' },
-    { status: 'pending', label: 'Pending', count: kpis.pendingLeads, percentage: Math.round((kpis.pendingLeads / total) * 100), color: '#B7791F' },
-    { status: 'confirmed', label: 'Confirmed', count: kpis.confirmedLeads, percentage: Math.round((kpis.confirmedLeads / total) * 100), color: '#16865D' },
-    { status: 'not_interested', label: 'Not Interested', count: kpis.notInterestedLeads, percentage: Math.round((kpis.notInterestedLeads / total) * 100), color: '#C74747' },
+    {
+      status: 'new',
+      label: 'New Inquiries',
+      count: kpis.newLeads,
+      percentage: Math.round((kpis.newLeads / total) * 100),
+      color: '#0EA5E9',
+    },
+    {
+      status: 'contacted',
+      label: 'Contacted',
+      count: kpis.contactedLeads,
+      percentage: Math.round((kpis.contactedLeads / total) * 100),
+      color: '#3B82F6',
+    },
+    {
+      status: 'interested',
+      label: 'Interested',
+      count: kpis.interestedLeads,
+      percentage: Math.round((kpis.interestedLeads / total) * 100),
+      color: '#14B8A6',
+    },
+    {
+      status: 'pending',
+      label: 'Pending Decision',
+      count: kpis.pendingLeads + kpis.followUpLeads,
+      percentage: Math.round(((kpis.pendingLeads + kpis.followUpLeads) / total) * 100),
+      color: '#F59E0B',
+    },
+    {
+      status: 'confirmed',
+      label: 'Confirmed Won',
+      count: kpis.confirmedLeads,
+      percentage: Math.round((kpis.confirmedLeads / total) * 100),
+      color: '#10B981',
+    },
+    {
+      status: 'not_interested',
+      label: 'Closed Lost',
+      count: kpis.notInterestedLeads,
+      percentage: Math.round((kpis.notInterestedLeads / total) * 100),
+      color: '#F43F5E',
+    },
   ];
 }
 
 export async function getEmployeeRankings(): Promise<EmployeePerformance[]> {
+  return getCachedOrFetch('employee_rankings', 15000, async () => {
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: employees } = await supabase
-      .from('profiles')
-      .select('id, full_name, employee_id')
-      .eq('role', 'employee')
-      .eq('is_active', true);
+    const supabase = await getDbClient();
 
-    if (employees && employees.length > 0) {
-      // Calculate per employee stats
-      return employees.map((emp, idx) => ({
-        employee: emp,
-        assignedLeads: 45 + idx * 10,
-        contactedLeads: 32 + idx * 8,
-        interestedLeads: 14 + idx * 4,
-        confirmedLeads: 6 + idx * 2,
-        pendingLeads: 5 + idx,
-        followUpsCompleted: 28 + idx * 5,
-        overdueFollowUps: Math.max(0, 2 - idx),
-        conversionRate: Math.round(((6 + idx * 2) / (45 + idx * 10)) * 100),
-        contactRate: Math.round(((32 + idx * 8) / (45 + idx * 10)) * 100),
-      }));
+    const [
+      { data: employees },
+      { data: assignments },
+      { data: leads },
+      { data: followUps },
+    ] = await Promise.all([
+      supabase
+        .from('profiles')
+        .select('id, full_name, employee_id')
+        .eq('role', 'employee')
+        .order('created_at', { ascending: true }),
+      supabase
+        .from('lead_assignments')
+        .select('lead_id, employee_id')
+        .eq('is_active', true),
+      supabase.from('leads').select('id, status'),
+      supabase.from('follow_ups').select('id, employee_id, status, scheduled_at'),
+    ]);
+
+    if (!employees || employees.length === 0) {
+      return [];
     }
-  } catch (err) {}
 
-  return [
-    {
-      employee: { id: 'emp-1', full_name: 'Priya Sharma', employee_id: 'EMP1001' },
-      assignedLeads: 120,
-      contactedLeads: 98,
-      interestedLeads: 42,
-      confirmedLeads: 18,
-      pendingLeads: 12,
-      followUpsCompleted: 85,
-      overdueFollowUps: 1,
-      conversionRate: 15.0,
-      contactRate: 81.6,
-    },
-    {
-      employee: { id: 'emp-2', full_name: 'Vikram Patel', employee_id: 'EMP1002' },
-      assignedLeads: 110,
-      contactedLeads: 86,
-      interestedLeads: 36,
-      confirmedLeads: 14,
-      pendingLeads: 10,
-      followUpsCompleted: 74,
-      overdueFollowUps: 2,
-      conversionRate: 12.7,
-      contactRate: 78.1,
-    },
-    {
-      employee: { id: 'emp-3', full_name: 'Rahul Varma', employee_id: 'EMP1003' },
-      assignedLeads: 95,
-      contactedLeads: 70,
-      interestedLeads: 28,
-      confirmedLeads: 11,
-      pendingLeads: 8,
-      followUpsCompleted: 62,
-      overdueFollowUps: 0,
-      conversionRate: 11.5,
-      contactRate: 73.6,
-    },
-    {
-      employee: { id: 'emp-4', full_name: 'Ananya Roy', employee_id: 'EMP1004' },
-      assignedLeads: 80,
-      contactedLeads: 58,
-      interestedLeads: 22,
-      confirmedLeads: 8,
-      pendingLeads: 6,
-      followUpsCompleted: 48,
-      overdueFollowUps: 3,
-      conversionRate: 10.0,
-      contactRate: 72.5,
-    },
-  ];
+    const leadMap = new Map<string, string>();
+    (leads || []).forEach((l: any) => leadMap.set(l.id, l.status));
+
+    const nowMs = Date.now();
+
+    const rankings: EmployeePerformance[] = employees.map((emp: any) => {
+      const empAssigns = (assignments || []).filter((a: any) => a.employee_id === emp.id);
+      const assignedLeads = empAssigns.length;
+
+      let contactedLeads = 0;
+      let interestedLeads = 0;
+      let confirmedLeads = 0;
+      let pendingLeads = 0;
+
+      empAssigns.forEach((a: any) => {
+        const st = leadMap.get(a.lead_id);
+        if (st && st !== 'new') contactedLeads += 1;
+        if (st === 'interested') interestedLeads += 1;
+        if (st === 'confirmed') confirmedLeads += 1;
+        if (st === 'pending' || st === 'follow_up') pendingLeads += 1;
+      });
+
+      const empFollowUps = (followUps || []).filter((f: any) => f.employee_id === emp.id);
+      const followUpsCompleted = empFollowUps.filter((f: any) => f.status === 'completed').length;
+      const overdueFollowUps = empFollowUps.filter(
+        (f: any) =>
+          f.status !== 'completed' &&
+          f.status !== 'cancelled' &&
+          new Date(f.scheduled_at).getTime() < nowMs
+      ).length;
+
+      const conversionRate =
+        assignedLeads > 0 ? Number(((confirmedLeads / assignedLeads) * 100).toFixed(1)) : 0;
+      const contactRate =
+        assignedLeads > 0 ? Number(((contactedLeads / assignedLeads) * 100).toFixed(1)) : 0;
+
+      return {
+        employee: emp,
+        assignedLeads,
+        contactedLeads,
+        interestedLeads,
+        confirmedLeads,
+        pendingLeads,
+        followUpsCompleted,
+        overdueFollowUps,
+        conversionRate,
+        contactRate,
+      };
+    });
+
+    return rankings.sort((a, b) => b.confirmedLeads - a.confirmedLeads || b.assignedLeads - a.assignedLeads);
+  } catch (err) {
+    console.error('getEmployeeRankings error:', err);
+    return [];
+  }
+  });
 }
 
-export async function getEmployeePersonalKPIs(employeeId: string) {
-  return {
-    myAssignedLeads: 48,
-    availablePoolLeads: 1420,
-    callsToday: 14,
-    contactedLeads: 38,
-    interestedLeads: 16,
-    pendingLeads: 7,
-    followUpsDue: 5,
-    confirmedLeads: 6,
-    conversionRate: 12.5,
-    contactRate: 79.1,
-  };
+export async function getEmployeePersonalKPIs(employeeId?: string) {
+  try {
+    const supabase = await getDbClient();
+    let targetEmpId = employeeId;
+
+    if (!targetEmpId || targetEmpId === 'emp-current') {
+      try {
+        const authClient = await createServerSupabaseClient();
+        const {
+          data: { user },
+        } = await authClient.auth.getUser();
+        if (user?.id) {
+          targetEmpId = user.id;
+        }
+      } catch {}
+    }
+
+    if (!targetEmpId || targetEmpId === 'emp-current') {
+      const { data: firstEmp } = await supabase
+        .from('profiles')
+        .select('id')
+        .eq('role', 'employee')
+        .limit(1)
+        .single();
+      targetEmpId = firstEmp?.id;
+    }
+
+    const [
+      { data: allLeads },
+      { data: allAssigns },
+      { data: todayActivities },
+      { data: empFollowUps },
+    ] = await Promise.all([
+      supabase.from('leads').select('id, status'),
+      supabase.from('lead_assignments').select('lead_id, employee_id').eq('is_active', true),
+      supabase
+        .from('lead_activities')
+        .select('id, employee_id, activity_type, created_at')
+        .gte('created_at', new Date(new Date().setHours(0, 0, 0, 0)).toISOString()),
+      targetEmpId
+        ? supabase
+            .from('follow_ups')
+            .select('id, status, scheduled_at')
+            .eq('employee_id', targetEmpId)
+            .neq('status', 'completed')
+            .neq('status', 'cancelled')
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const assignedSet = new Set((allAssigns || []).map((a: any) => a.lead_id));
+    const availablePoolLeads = (allLeads || []).filter(
+      (l: any) => !assignedSet.has(l.id) && l.status !== 'archived' && l.status !== 'unqualified'
+    ).length;
+
+    const myLeadIds = new Set(
+      (allAssigns || [])
+        .filter((a: any) => !targetEmpId || a.employee_id === targetEmpId)
+        .map((a: any) => a.lead_id)
+    );
+
+    const myLeads = (allLeads || []).filter((l: any) => myLeadIds.has(l.id));
+    const myAssignedLeads = myLeads.length;
+    const contactedLeads = myLeads.filter((l: any) => l.status !== 'new').length;
+    const interestedLeads = myLeads.filter((l: any) => l.status === 'interested').length;
+    const pendingLeads = myLeads.filter(
+      (l: any) => l.status === 'pending' || l.status === 'follow_up'
+    ).length;
+    const confirmedLeads = myLeads.filter((l: any) => l.status === 'confirmed').length;
+
+    const callsToday = (todayActivities || []).filter(
+      (a: any) => (!targetEmpId || a.employee_id === targetEmpId) && a.activity_type === 'call_outcome'
+    ).length;
+
+    const followUpsDue = (empFollowUps || []).length;
+
+    const conversionRate =
+      myAssignedLeads > 0 ? Number(((confirmedLeads / myAssignedLeads) * 100).toFixed(1)) : 0;
+    const contactRate =
+      myAssignedLeads > 0 ? Number(((contactedLeads / myAssignedLeads) * 100).toFixed(1)) : 0;
+
+    return {
+      myAssignedLeads,
+      availablePoolLeads,
+      callsToday,
+      contactedLeads,
+      interestedLeads,
+      pendingLeads,
+      followUpsDue,
+      confirmedLeads,
+      conversionRate,
+      contactRate,
+    };
+  } catch (err) {
+    console.error('getEmployeePersonalKPIs error:', err);
+    return {
+      myAssignedLeads: 0,
+      availablePoolLeads: 0,
+      callsToday: 0,
+      contactedLeads: 0,
+      interestedLeads: 0,
+      pendingLeads: 0,
+      followUpsDue: 0,
+      confirmedLeads: 0,
+      conversionRate: 0,
+      contactRate: 0,
+    };
+  }
+}
+
+export async function getAnalyticsBreakdown() {
+  try {
+    const supabase = await getDbClient();
+    const [{ data: leads }, { data: activities }] = await Promise.all([
+      supabase.from('leads').select('id, source, status'),
+      supabase
+        .from('lead_activities')
+        .select('id, call_outcome')
+        .not('call_outcome', 'is', null),
+    ]);
+
+    const sourceMap = new Map<string, { total: number; confirmed: number }>();
+    (leads || []).forEach((l: any) => {
+      const src = l.source || 'Direct / Excel Import';
+      const entry = sourceMap.get(src) || { total: 0, confirmed: 0 };
+      entry.total += 1;
+      if (l.status === 'confirmed') entry.confirmed += 1;
+      sourceMap.set(src, entry);
+    });
+
+    const colors = ['bg-primary-600', 'bg-accent-blue', 'bg-warning', 'bg-success', 'bg-purple-600'];
+    const sources = Array.from(sourceMap.entries())
+      .map(([source, stats], idx) => {
+        const pct = stats.total > 0 ? Math.round((stats.confirmed / stats.total) * 100) : 0;
+        return {
+          source,
+          count: stats.total,
+          rate: `${pct}%`,
+          widthPct: Math.max(8, Math.min(100, Math.round((stats.total / Math.max(1, (leads || []).length)) * 100))),
+          color: colors[idx % colors.length],
+        };
+      })
+      .sort((a, b) => b.count - a.count);
+
+    const outcomeLabels: Record<string, { label: string; color: string }> = {
+      connected: { label: 'Connected / Pitch Completed', color: '#10B981' },
+      call_back: { label: 'Call Back Requested', color: '#147D72' },
+      busy: { label: 'Busy Line', color: '#F59E0B' },
+      no_answer: { label: 'Ringing Unanswered', color: '#6366F1' },
+      not_reachable: { label: 'Not Reachable / Switched Off', color: '#64748B' },
+      switched_off: { label: 'Switched Off', color: '#64748B' },
+      wrong_number: { label: 'Wrong Number / Invalid', color: '#EF4444' },
+      other: { label: 'Other Outcome', color: '#8B5CF6' },
+    };
+
+    const outcomeCounts = new Map<string, number>();
+    (activities || []).forEach((a: any) => {
+      const k = a.call_outcome || 'other';
+      outcomeCounts.set(k, (outcomeCounts.get(k) || 0) + 1);
+    });
+
+    const totalCalls = Math.max(1, (activities || []).length);
+    const callOutcomes = Array.from(outcomeCounts.entries())
+      .map(([key, count]) => ({
+        label: outcomeLabels[key]?.label || key,
+        count,
+        pct: Math.round((count / totalCalls) * 100),
+        color: outcomeLabels[key]?.color || '#147D72',
+      }))
+      .sort((a, b) => b.count - a.count);
+
+    return { sources, callOutcomes, totalCalls: (activities || []).length };
+  } catch (err) {
+    return { sources: [], callOutcomes: [], totalCalls: 0 };
+  }
 }

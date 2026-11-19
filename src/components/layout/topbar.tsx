@@ -11,10 +11,7 @@ import {
   LogOut,
   Settings,
   ChevronRight,
-  ShieldCheck,
   CheckCircle2,
-  Clock,
-  Sparkles
 } from 'lucide-react';
 import { useSidebar } from './sidebar';
 import {
@@ -58,23 +55,45 @@ export function Topbar({
   },
   notifications = [],
 }: TopbarProps) {
-  const { toggle, setMobileOpen, isCollapsed } = useSidebar();
+  const { setMobileOpen } = useSidebar();
   const pathname = usePathname();
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState('');
   const [unreadNotifications, setUnreadNotifications] = useState(notifications);
 
+  React.useEffect(() => {
+    const loadNotifications = async () => {
+      try {
+        const res = await fetch('/api/notifications');
+        const data = await res.json();
+        if (Array.isArray(data.notifications)) {
+          setUnreadNotifications(data.notifications);
+        }
+      } catch {}
+    };
+    loadNotifications();
+    const timer = setInterval(loadNotifications, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   const unreadCount = unreadNotifications.filter((n) => !n.is_read).length;
+
+  const handleMarkAllRead = async () => {
+    setUnreadNotifications((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    try {
+      await fetch('/api/notifications', { method: 'PATCH' });
+    } catch {}
+  };
 
   const handleLogout = async () => {
     try {
+      await fetch('/api/auth/logout', { method: 'POST' });
       const supabase = createClient();
       await supabase.auth.signOut();
     } catch (e) {
       console.error('Logout error:', e);
     } finally {
-      router.push('/login');
-      router.refresh();
+      window.location.href = '/login';
     }
   };
 
@@ -96,13 +115,16 @@ export function Topbar({
   });
 
   return (
-    <header className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-border bg-surface/90 px-4 backdrop-blur-md transition-all sm:px-6">
+    <header
+      className="sticky top-0 z-30 flex h-16 w-full items-center justify-between border-b border-border bg-white px-6 lg:px-9 shadow-2xs transition-all"
+      style={{ height: '64px', padding: '0 32px' }}
+    >
       {/* Left: Mobile hamburger & Breadcrumbs */}
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 shrink-0" style={{ gap: '12px' }}>
         <Button
           variant="ghost"
           size="icon"
-          className="md:hidden text-text-secondary hover:text-text-primary"
+          className="md:hidden text-text-secondary hover:text-text-primary h-9 w-9"
           onClick={() => setMobileOpen(true)}
           aria-label="Open mobile menu"
         >
@@ -110,7 +132,11 @@ export function Topbar({
         </Button>
 
         {/* Breadcrumbs */}
-        <nav aria-label="Breadcrumb" className="hidden sm:flex items-center space-x-1.5 text-xs text-text-muted">
+        <nav
+          aria-label="Breadcrumb"
+          className="hidden sm:flex items-center gap-2 text-[13px] text-text-muted"
+          style={{ gap: '8px' }}
+        >
           <Link
             href={user.role === 'admin' ? '/admin/dashboard' : '/employee/dashboard'}
             className="font-medium text-text-secondary hover:text-primary-600 transition-colors"
@@ -135,24 +161,35 @@ export function Topbar({
         </nav>
       </div>
 
-      {/* Center: Global Search */}
-      <div className="flex-1 max-w-md mx-4">
-        <form onSubmit={handleSearchSubmit} className="relative w-full">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-text-muted" />
+      {/* Center: Global Search (Flex layout prevents icon/text overlap) */}
+      <div className="hidden md:flex flex-1 max-w-md mx-8" style={{ margin: '0 24px' }}>
+        <form
+          onSubmit={handleSearchSubmit}
+          className="flex items-center gap-3 w-full h-10.5 rounded-xl border border-border bg-[#F8FAFB] px-3.5 focus-within:border-primary-500 focus-within:bg-white focus-within:ring-2 focus-within:ring-primary-500/15 transition-all shadow-2xs"
+          style={{ padding: '0 14px', gap: '10px', height: '42px' }}
+        >
+          <Search className="h-4 w-4 text-text-muted shrink-0" />
           <input
             type="search"
-            placeholder={user.role === 'admin' ? "Search leads, phone, email, contact..." : "Search my leads..."}
+            placeholder={
+              user.role === 'admin'
+                ? 'Search leads, businesses, phone, email, contact...'
+                : 'Search my assigned leads...'
+            }
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="h-9 w-full rounded-full border border-border bg-surface-muted/60 pl-9 pr-4 text-xs text-text-primary placeholder:text-text-muted focus:border-primary-500 focus:bg-surface focus:outline-none focus:ring-1 focus:ring-primary-500 transition-all shadow-xs"
+            className="w-full h-full bg-transparent text-[13px] text-text-primary placeholder:text-text-muted focus:outline-none"
           />
         </form>
       </div>
 
       {/* Right: Actions, Notifications, Profile */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex items-center gap-3" style={{ gap: '12px' }}>
         {/* Status Indicator Pill */}
-        <div className="hidden lg:flex items-center gap-1.5 rounded-full bg-primary-50 border border-primary-100 px-2.5 py-1 text-[11px] font-medium text-primary-700">
+        <div
+          className="hidden lg:flex items-center gap-2 rounded-full bg-primary-50 border border-primary-200/70 px-3 py-1 text-[12px] font-semibold text-primary-700"
+          style={{ padding: '4px 12px', gap: '6px' }}
+        >
           <span className="h-2 w-2 rounded-full bg-primary-500 animate-pulse" />
           <span>Live CRM</span>
         </div>
@@ -163,7 +200,7 @@ export function Topbar({
             <Button
               variant="ghost"
               size="icon"
-              className="relative rounded-full text-text-secondary hover:bg-surface-muted hover:text-text-primary"
+              className="relative rounded-full text-text-secondary hover:bg-surface-muted hover:text-text-primary h-9 w-9"
               aria-label="View notifications"
             >
               <Bell className="h-4 w-4" />
@@ -176,16 +213,15 @@ export function Topbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-80 p-0 shadow-lg border-border">
-            <div className="flex items-center justify-between border-b border-border-light px-4 py-3">
+            <div
+              className="flex items-center justify-between border-b border-border-light px-4 py-3"
+              style={{ padding: '12px 16px' }}
+            >
               <span className="text-xs font-semibold text-text-primary">Notifications</span>
               {unreadCount > 0 && (
                 <button
-                  onClick={() =>
-                    setUnreadNotifications((prev) =>
-                      prev.map((n) => ({ ...n, is_read: true }))
-                    )
-                  }
-                  className="text-[11px] text-primary-600 hover:text-primary-700 font-medium"
+                  onClick={handleMarkAllRead}
+                  className="text-[11px] text-primary-600 hover:text-primary-700 font-medium cursor-pointer"
                 >
                   Mark all as read
                 </button>
@@ -193,7 +229,10 @@ export function Topbar({
             </div>
             <div className="max-h-72 overflow-y-auto divide-y divide-border-light">
               {unreadNotifications.length === 0 ? (
-                <div className="flex flex-col items-center justify-center p-6 text-center text-xs text-text-muted">
+                <div
+                  className="flex flex-col items-center justify-center p-6 text-center text-xs text-text-muted"
+                  style={{ padding: '24px' }}
+                >
                   <CheckCircle2 className="h-8 w-8 text-primary-400 mb-2" />
                   <p className="font-medium text-text-secondary">You&apos;re all caught up</p>
                   <p className="text-[11px]">No pending notifications</p>
@@ -202,9 +241,10 @@ export function Topbar({
                 unreadNotifications.map((n) => (
                   <div
                     key={n.id}
-                    className={`p-3 text-xs transition-colors hover:bg-surface-muted ${
+                    className={`p-3.5 text-xs transition-colors hover:bg-surface-muted ${
                       !n.is_read ? 'bg-primary-50/40' : ''
                     }`}
+                    style={{ padding: '14px' }}
                   >
                     <p className="font-medium text-text-primary">{n.title}</p>
                     <p className="text-[11px] text-text-secondary mt-0.5">{n.message}</p>
@@ -223,7 +263,8 @@ export function Topbar({
           <DropdownMenuTrigger asChild>
             <Button
               variant="ghost"
-              className="flex items-center gap-2 p-1.5 pl-2 rounded-full hover:bg-surface-muted transition-colors"
+              className="flex items-center gap-2.5 px-2.5 py-1.5 rounded-full hover:bg-surface-muted transition-colors h-auto"
+              style={{ padding: '6px 10px', gap: '10px' }}
             >
               <Avatar className="h-8 w-8 border border-border">
                 {user.avatarUrl && <AvatarImage src={user.avatarUrl} alt={user.fullName} />}
@@ -242,7 +283,7 @@ export function Topbar({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 shadow-lg border-border">
-            <DropdownMenuLabel className="font-normal p-3">
+            <DropdownMenuLabel className="font-normal p-3" style={{ padding: '12px' }}>
               <div className="flex flex-col space-y-1">
                 <p className="text-xs font-semibold text-text-primary leading-none">
                   {user.fullName}
@@ -251,7 +292,10 @@ export function Topbar({
                   {user.email}
                 </p>
                 <div className="pt-1.5 flex items-center gap-1.5">
-                  <span className="inline-flex items-center rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-medium text-primary-800">
+                  <span
+                    className="inline-flex items-center rounded-full bg-primary-100 px-2 py-0.5 text-[10px] font-medium text-primary-800"
+                    style={{ padding: '2px 8px' }}
+                  >
                     {user.role === 'admin' ? 'Super Admin' : `ID: ${user.employeeId}`}
                   </span>
                 </div>

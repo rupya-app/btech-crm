@@ -1,23 +1,26 @@
 import React from 'react';
-import { getLeads } from '@/services/leads.service';
+import { AdminPageContainer, PageHeader } from '@/components/common';
+import { getLeads, getLeadStatusCounts, getCurrentUserId } from '@/services/leads.service';
 import { LeadTable } from '@/components/leads/lead-table';
 
+export const dynamic = 'force-dynamic';
 
 export default async function EmployeeConfirmedLeadsPage() {
-  const { data: leads, total, totalPages } = await getLeads({
-    status: 'confirmed',
-  });
+  const employeeId = await getCurrentUserId();
+  const [{ data: leads, total, totalPages }, statusCounts] = await Promise.all([
+    getLeads({
+      status: 'confirmed',
+      employeeId: employeeId || undefined,
+    }),
+    getLeadStatusCounts(employeeId || undefined),
+  ]);
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-          Confirmed Wins & Deals
-        </h1>
-        <p className="text-xs text-text-muted mt-1">
-          Review your closed deals and client onboarding milestones.
-        </p>
-      </div>
+    <AdminPageContainer>
+      <PageHeader
+        title="Confirmed Wins & Deals"
+        description="Review your closed deals and client onboarding milestones."
+      />
 
       <LeadTable
         initialLeads={leads}
@@ -25,8 +28,9 @@ export default async function EmployeeConfirmedLeadsPage() {
         page={1}
         pageSize={25}
         totalPages={totalPages}
+        statusCounts={statusCounts}
         isAdmin={false}
       />
-    </div>
+    </AdminPageContainer>
   );
 }

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
+import { getDbClient, createServerSupabaseClient, invalidateCrmCache } from '@/lib/supabase/server';
 
 export async function POST(request: NextRequest) {
   try {
@@ -9,33 +9,102 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Lead ID is required' }, { status: 400 });
     }
 
-    const supabase = await createServerSupabaseClient();
-    const { data: { user } } = await supabase.auth.getUser();
+    const supabase = await getDbClient();
+    let employeeId: string | null = null;
+    let employeeName = 'Sales Representative';
 
-    const employeeId = user?.id || 'demo-emp-id';
+    try {
+      const authClient = await createServerSupabaseClient();
+      const {
+        data: { user },
+      } = await authClient.auth.getUser();
+      if (user?.id) {
+        employeeId = user.id;
+        const { data: prof } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', user.id)
+          .single();
+        if (prof?.full_name) employeeName = prof.full_name;
+      }
+    } catch {}
 
-    // Call atomic Postgres function `claim_lead`
-    const { data, error } = await supabase.rpc('claim_lead', {
-      p_lead_id: leadId,
-      p_employee_id: employeeId,
+    if (!employeeId) {
+      const { data: firstEmp } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .eq('role', 'employee')
+        .limit(1)
+        .single();
+      if (firstEmp) {
+        employeeId = firstEmp.id;
+        employeeName = firstEmp.full_name;
+      }
+    }
+
+    if (!employeeId) {
+      return NextResponse.json(
+        { error: 'No active employee profile found to claim this lead.' },
+        { status: 400 }
+      );
+    }
+
+    // Check if already claimed
+    const { data: existing } = await supabase
+      .from('lead_assignments')
+      .select('id')
+      .eq('lead_id', leadId)
+      .eq('is_active', true)
+      .maybeSingle();
+
+    if (existing) {
+      return NextResponse.json(
+        { error: 'This lead has already been claimed by another representative.' },
+        { status: 409 }
+      );
+    }
+
+    const { data: lead } = await supabase
+      .from('leads')
+      .select('business_name')
+      .eq('id', leadId)
+      .single();
+
+    const { error: assignErr } = await supabase.from('lead_assignments').insert({
+      lead_id: leadId,
+      employee_id: employeeId,
+      assigned_by: employeeId,
+      assignment_type: 'self_selected',
+      assigned_at: new Date().toISOString(),
+      is_active: true,
     });
 
-    if (error) {
-      // In local dev without database function installed, return simulation
-      return NextResponse.json({
-        success: true,
-        message: 'Lead claimed successfully! Added to your workspace.',
-      });
+    if (assignErr) {
+      return NextResponse.json({ error: assignErr.message }, { status: 400 });
     }
 
-    if (!data.success) {
-      return NextResponse.json({ error: data.error }, { status: 409 });
-    }
+    await supabase.from('lead_activities').insert({
+      lead_id: leadId,
+      employee_id: employeeId,
+      activity_type: 'lead_claimed',
+      description: `${employeeName} self-claimed this lead from the Unassigned Pool.`,
+    });
+
+    await supabase.from('notifications').insert({
+      user_id: employeeId,
+      title: 'Lead Claimed from Pool',
+      message: `You have claimed "${lead?.business_name || 'Lead'}". Full contact details are now unlocked.`,
+      notification_type: 'lead_assigned',
+      related_entity_id: leadId,
+      related_entity_type: 'lead',
+    });
+
+    invalidateCrmCache();
 
     return NextResponse.json({
       success: true,
-      message: data.message || 'Lead claimed successfully!',
-      leadId: data.lead_id,
+      message: 'Lead claimed successfully! Added to your active queue.',
+      leadId,
     });
   } catch (error: any) {
     return NextResponse.json(

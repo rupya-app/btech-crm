@@ -1,119 +1,160 @@
 import React from 'react';
 import Link from 'next/link';
 import { Clock, Phone, Calendar, ArrowRight, User } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { getDbClient } from '@/lib/supabase/server';
+import { formatDateTime } from '@/lib/utils';
 
-export function UpcomingFollowups({ isAdmin = true }: { isAdmin?: boolean }) {
-  const followups = [
-    {
-      id: 'f-1',
-      businessName: 'Apex Logistics & Freight',
-      contact: 'Rajesh Verma',
-      phone: '+91 98201 12345',
-      time: 'Today, 2:30 PM',
-      purpose: 'Product Demo & Pricing Discussion',
-      assignedTo: 'Priya Sharma',
-      status: 'due_today',
-      leadId: 'b0000000-0000-0000-0000-000000000001',
-    },
-    {
-      id: 'f-2',
-      businessName: 'Zenith Precision Engineering',
-      contact: 'Karthik Sundaram',
-      phone: '+91 98401 22334',
-      time: 'Today, 4:00 PM',
-      purpose: 'Technical integration review',
-      assignedTo: 'Vikram Patel',
-      status: 'due_today',
-      leadId: 'b0000000-0000-0000-0000-000000000004',
-    },
-    {
-      id: 'f-3',
-      businessName: 'UrbanCraft Modern Furniture',
-      contact: 'Amitabh Saxena',
-      phone: '+91 99887 66554',
-      time: 'Tomorrow, 11:00 AM',
-      purpose: 'Contract terms sign-off',
-      assignedTo: 'Rahul Varma',
-      status: 'scheduled',
-      leadId: 'b0000000-0000-0000-0000-000000000006',
-    },
-  ];
+export async function UpcomingFollowups({ isAdmin = true }: { isAdmin?: boolean }) {
+  const supabase = await getDbClient();
+  const { data } = await supabase
+    .from('follow_ups')
+    .select(
+      'id, lead_id, scheduled_at, purpose, notes, status, lead:leads(business_name, contact_person, phone), employee:profiles(full_name)'
+    )
+    .neq('status', 'completed')
+    .neq('status', 'cancelled')
+    .order('scheduled_at', { ascending: true })
+    .limit(6);
+
+  const followups = (data || []).map((f: any) => {
+    const schedMs = new Date(f.scheduled_at).getTime();
+    const isDueToday = schedMs <= new Date(new Date().setHours(23, 59, 59, 999)).getTime();
+    return {
+      id: f.id,
+      leadId: f.lead_id,
+      businessName: f.lead?.business_name || 'Client',
+      contact: f.lead?.contact_person || 'Contact',
+      phone: f.lead?.phone || '—',
+      time: formatDateTime(f.scheduled_at),
+      purpose: f.purpose || f.notes || 'Scheduled follow-up call',
+      assignedTo: f.employee?.full_name || 'Unassigned',
+      isDueToday,
+    };
+  });
 
   return (
-    <div className="p-6 rounded-2xl bg-surface border border-border shadow-xs">
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className="p-2 rounded-lg bg-primary-50 text-primary-600">
+    <div
+      className="rounded-2xl bg-white border border-border shadow-xs"
+      style={{ padding: '24px 28px' }}
+    >
+      <div
+        className="flex items-center justify-between border-b border-border-light"
+        style={{ paddingBottom: '16px', marginBottom: '20px' }}
+      >
+        <div className="flex items-center" style={{ gap: '12px' }}>
+          <div
+            className="rounded-xl bg-purple-50 text-purple-600 flex items-center justify-center border border-purple-200"
+            style={{ width: '38px', height: '38px' }}
+          >
             <Clock className="w-4 h-4" />
           </div>
           <div>
-            <h3 className="text-sm font-semibold text-text-primary">Upcoming Follow-ups</h3>
-            <p className="text-[11px] text-text-muted">Calls & demos scheduled for today and tomorrow</p>
+            <h3 className="text-[16px] font-bold text-text-primary">Upcoming Follow-ups</h3>
+            <p className="text-[12.5px] text-text-muted">
+              Live callback reminders from your database ({followups.length})
+            </p>
           </div>
         </div>
         <Link
           href={isAdmin ? '/admin/follow-ups' : '/employee/follow-ups'}
-          className="text-xs font-medium text-primary-600 hover:text-primary-700"
+          className="text-[13px] font-semibold text-primary-600 hover:text-primary-700"
         >
-          View all
+          View all →
         </Link>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-        {followups.map((f) => (
-          <div
-            key={f.id}
-            className="flex flex-col justify-between p-4 rounded-xl border border-border-light bg-surface-muted/50 hover:bg-surface hover:border-primary-200 transition-all group"
-          >
-            <div>
-              <div className="flex items-center justify-between gap-1 mb-2">
-                <span className="inline-flex items-center gap-1 text-[11px] font-semibold text-primary-700 bg-primary-50 px-2 py-0.5 rounded-full">
-                  <Calendar className="w-3 h-3 text-primary-600" />
-                  {f.time}
-                </span>
-                {f.status === 'due_today' && (
-                  <span className="text-[10px] font-bold text-warning uppercase">Due Today</span>
-                )}
-              </div>
-
-              <h4 className="text-xs font-bold text-text-primary group-hover:text-primary-600 truncate">
-                {f.businessName}
-              </h4>
-              <p className="text-[11px] text-text-secondary mt-0.5 truncate">
-                {f.contact} • {f.phone}
-              </p>
-              <p className="text-[11px] text-text-muted mt-2 line-clamp-1 italic">
-                &ldquo;{f.purpose}&rdquo;
-              </p>
-            </div>
-
-            <div className="mt-4 pt-3 border-t border-border-light flex items-center justify-between">
-              {isAdmin && (
-                <div className="flex items-center gap-1 text-[10px] text-text-muted">
-                  <User className="w-3 h-3" />
-                  <span>{f.assignedTo}</span>
+      {followups.length === 0 ? (
+        <div className="text-center py-8 text-[13px] text-text-muted">
+          No pending follow-ups scheduled right now.
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-3" style={{ gap: '16px' }}>
+          {followups.slice(0, 3).map((f) => (
+            <div
+              key={f.id}
+              className="flex flex-col justify-between rounded-xl border bg-[#F8FAFB] hover:bg-white hover:shadow-sm transition-all group"
+              style={{
+                padding: '18px',
+                borderColor: f.isDueToday ? '#FDE68A' : '#E7EAEE',
+                borderTop: `3px solid ${f.isDueToday ? '#F59E0B' : '#8B5CF6'}`,
+              }}
+            >
+              <div>
+                <div
+                  className="flex items-center justify-between"
+                  style={{ gap: '8px', marginBottom: '12px' }}
+                >
+                  <span
+                    className="inline-flex items-center text-[11px] font-semibold rounded-full"
+                    style={{
+                      padding: '3px 10px',
+                      gap: '5px',
+                      backgroundColor: f.isDueToday ? '#FEF3C7' : '#F3E8FF',
+                      color: f.isDueToday ? '#92400E' : '#5B21B6',
+                    }}
+                  >
+                    <Calendar className="w-3 h-3 shrink-0" />
+                    {f.time}
+                  </span>
+                  {f.isDueToday && (
+                    <span className="text-[10.5px] font-bold text-warning uppercase tracking-wider">
+                      Due Today
+                    </span>
+                  )}
                 </div>
-              )}
-              <div className="flex items-center gap-2 ml-auto">
-                <a
-                  href={`tel:${f.phone.replace(/\s/g, '')}`}
-                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-[11px] font-medium shadow-xs transition-colors"
+
+                <h4 className="text-[14px] font-bold text-text-primary group-hover:text-primary-600 truncate">
+                  {f.businessName}
+                </h4>
+                <p
+                  className="text-[12.5px] text-text-secondary truncate"
+                  style={{ marginTop: '4px' }}
                 >
-                  <Phone className="w-3 h-3" />
-                  <span>Call</span>
-                </a>
-                <Link
-                  href={isAdmin ? `/admin/leads/${f.leadId}` : `/employee/my-leads/${f.leadId}`}
-                  className="p-1 rounded-lg hover:bg-surface-muted text-text-muted hover:text-text-primary"
+                  {f.contact} • {f.phone}
+                </p>
+                <p
+                  className="text-[12px] text-text-muted line-clamp-1 italic"
+                  style={{ marginTop: '10px' }}
                 >
-                  <ArrowRight className="w-3.5 h-3.5" />
-                </Link>
+                  &ldquo;{f.purpose}&rdquo;
+                </p>
+              </div>
+
+              <div
+                className="border-t border-border-light flex items-center justify-between"
+                style={{ marginTop: '16px', paddingTop: '12px' }}
+              >
+                {isAdmin && (
+                  <div
+                    className="flex items-center text-[11.5px] text-text-muted font-medium"
+                    style={{ gap: '5px' }}
+                  >
+                    <User className="w-3.5 h-3.5" />
+                    <span>{f.assignedTo}</span>
+                  </div>
+                )}
+                <div className="flex items-center ml-auto" style={{ gap: '8px' }}>
+                  <a
+                    href={`tel:${f.phone.replace(/\s/g, '')}`}
+                    className="inline-flex items-center rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-[12px] font-semibold shadow-xs transition-colors"
+                    style={{ padding: '5px 12px', gap: '5px' }}
+                  >
+                    <Phone className="w-3 h-3" />
+                    <span>Call</span>
+                  </a>
+                  <Link
+                    href={isAdmin ? `/admin/leads/${f.leadId}` : `/employee/my-leads/${f.leadId}`}
+                    className="rounded-lg hover:bg-surface-muted text-text-muted hover:text-text-primary"
+                    style={{ padding: '6px' }}
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                </div>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

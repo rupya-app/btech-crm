@@ -1,104 +1,137 @@
 'use client';
 
-import React, { useState } from 'react';
-import { User, Mail, Phone, Building2, KeyRound, ShieldCheck, CheckCircle2 } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { KeyRound } from 'lucide-react';
+import {
+  AdminPageContainer,
+  PageHeader,
+  PageCard,
+  PageCardHeader,
+  SuccessNotice,
+} from '@/components/common';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { getInitials } from '@/lib/utils';
 
 export default function EmployeeProfilePage() {
-  const [fullName, setFullName] = useState('Sales Executive');
-  const [email, setEmail] = useState('employee@digitalcrm.com');
-  const [phone, setPhone] = useState('+91 98201 55667');
+  const [fullName, setFullName] = useState('');
+  const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
+  const [empId, setEmpId] = useState('');
+  const [department, setDepartment] = useState('');
+  const [saving, setSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
 
-  const handleSave = (e: React.FormEvent) => {
+  useEffect(() => {
+    const loadProfile = async () => {
+      try {
+        const res = await fetch('/api/profile');
+        const data = await res.json();
+        if (data.profile) {
+          setFullName(data.profile.full_name || '');
+          setEmail(data.profile.email || '');
+          setPhone(data.profile.phone || '');
+          setEmpId(data.profile.employee_id || 'EMP');
+          setDepartment(data.profile.department || 'Sales');
+        }
+      } catch {}
+    };
+    loadProfile();
+  }, []);
+
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
-    setSavedNotice(true);
-    setTimeout(() => setSavedNotice(false), 3000);
+    setSaving(true);
+    setSavedNotice(false);
+    try {
+      const res = await fetch('/api/profile', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fullName, phone }),
+      });
+      if (res.ok) {
+        setSavedNotice(true);
+        setTimeout(() => setSavedNotice(false), 3000);
+      }
+    } finally {
+      setSaving(false);
+    }
   };
 
   return (
-    <div className="max-w-2xl mx-auto space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-          My Account Profile
-        </h1>
-        <p className="text-xs text-text-muted mt-1">
-          Manage your personal contact info and security settings.
-        </p>
-      </div>
+    <AdminPageContainer maxWidth>
+      <PageHeader
+        title="My Account Profile"
+        description="Manage your personal contact info and security settings in Supabase."
+      />
 
       {savedNotice && (
-        <div className="flex items-center gap-2.5 p-3 rounded-xl bg-success-bg border border-success/30 text-success text-xs font-semibold animate-in fade-in-50">
-          <CheckCircle2 className="w-4 h-4 shrink-0" />
-          <span>Profile changes saved successfully!</span>
-        </div>
+        <SuccessNotice message="Profile changes saved to database!" />
       )}
 
-      <div className="bg-surface p-6 rounded-2xl border border-border shadow-xs space-y-5">
-        <div className="flex items-center gap-4 border-b border-border-light pb-5">
-          <div className="w-14 h-14 rounded-2xl bg-primary-100 text-primary-700 font-bold text-lg flex items-center justify-center">
-            SE
+      <PageCard className="space-y-6">
+        <div
+          className="flex items-center border-b border-border-light"
+          style={{ gap: '16px', paddingBottom: '20px', marginBottom: '20px' }}
+        >
+          <div className="w-14 h-14 rounded-2xl bg-primary-100 text-primary-700 font-bold text-lg flex items-center justify-center shadow-xs shrink-0">
+            {getInitials(fullName || 'SE')}
           </div>
           <div>
-            <h3 className="text-base font-bold text-text-primary">{fullName}</h3>
-            <span className="text-xs text-text-muted">Employee ID: <strong>EMP1001</strong> • Enterprise Sales</span>
+            <h3 className="text-[18px] font-bold text-text-primary">{fullName || 'Loading...'}</h3>
+            <span className="text-[13px] text-text-muted mt-0.5 block">
+              Employee ID: <strong className="text-text-primary">{empId}</strong> • {department}
+            </span>
           </div>
         </div>
 
-        <form onSubmit={handleSave} className="space-y-4">
-          <div className="space-y-1.5">
-            <Label className="text-xs">Full Name</Label>
+        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <Label className="text-[13px] font-medium text-text-primary">Full Name</Label>
             <Input
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
-              className="text-xs"
+              className="max-w-md"
+              required
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">Email Address (Managed by Admin)</Label>
-            <Input
-              value={email}
-              disabled
-              className="text-xs bg-surface-muted"
-            />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <Label className="text-[13px] font-medium text-text-primary">
+              Email Address (Managed by Admin)
+            </Label>
+            <Input value={email} disabled className="max-w-md" />
           </div>
 
-          <div className="space-y-1.5">
-            <Label className="text-xs">Phone Number</Label>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            <Label className="text-[13px] font-medium text-text-primary">Phone Number</Label>
             <Input
               value={phone}
               onChange={(e) => setPhone(e.target.value)}
-              className="text-xs"
+              className="max-w-md"
             />
           </div>
 
           <div className="pt-2">
-            <Button
-              type="submit"
-              className="text-xs bg-primary-600 hover:bg-primary-700 text-white"
-            >
-              Save Profile
+            <Button type="submit" disabled={saving}>
+              {saving ? 'Saving...' : 'Save Profile Changes'}
             </Button>
           </div>
         </form>
-      </div>
+      </PageCard>
 
       {/* Security Section */}
-      <div className="bg-surface p-6 rounded-2xl border border-border shadow-xs space-y-3">
-        <h3 className="text-sm font-semibold text-text-primary flex items-center gap-2">
-          <KeyRound className="w-4 h-4 text-primary-600" />
-          <span>Security & Password</span>
-        </h3>
-        <p className="text-xs text-text-muted leading-relaxed">
-          Need to change your account password? You can update it anytime using the security portal.
-        </p>
-        <Button asChild variant="outline" size="sm" className="text-xs">
+      <PageCard>
+        <PageCardHeader
+          title="Security & Password"
+          description="Need to change your account password? Update your Supabase Auth password anytime."
+          icon={KeyRound}
+        />
+        <Button asChild variant="outline">
           <a href="/change-password">Change Password</a>
         </Button>
-      </div>
-    </div>
+      </PageCard>
+    </AdminPageContainer>
   );
 }

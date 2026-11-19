@@ -112,9 +112,9 @@ export default function LoginPage() {
         </div>
 
         {/* Card */}
-        <div className="bg-surface/90 backdrop-blur-xl rounded-2xl border border-border shadow-xl p-6 sm:p-8">
+        <div className="bg-surface/95 backdrop-blur-xl rounded-2xl border border-border shadow-lg p-6 sm:p-8">
           {/* Tab Selector */}
-          <div className="grid grid-cols-2 p-1 bg-surface-muted rounded-xl mb-6 border border-border-light">
+          <div className="grid grid-cols-2 p-1.5 bg-surface-muted rounded-2xl mb-6 border border-border-light">
             <button
               type="button"
               onClick={() => {
@@ -122,13 +122,13 @@ export default function LoginPage() {
                 setIdentifier('');
                 setError(null);
               }}
-              className={`flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+              className={`flex items-center justify-center gap-2 py-2.5 text-xs font-bold rounded-xl transition-all ${
                 activeTab === 'admin'
                   ? 'bg-surface text-primary-700 shadow-xs'
                   : 'text-text-muted hover:text-text-primary'
               }`}
             >
-              <ShieldCheck className="w-3.5 h-3.5" />
+              <ShieldCheck className="w-4 h-4" />
               <span>Admin Portal</span>
             </button>
             <button
@@ -138,13 +138,13 @@ export default function LoginPage() {
                 setIdentifier('');
                 setError(null);
               }}
-              className={`flex items-center justify-center gap-2 py-2 text-xs font-semibold rounded-lg transition-all ${
+              className={`flex items-center justify-center gap-2 py-2.5 text-xs font-bold rounded-xl transition-all ${
                 activeTab === 'employee'
                   ? 'bg-surface text-primary-700 shadow-xs'
                   : 'text-text-muted hover:text-text-primary'
               }`}
             >
-              <UserCheck className="w-3.5 h-3.5" />
+              <UserCheck className="w-4 h-4" />
               <span>Employee Login</span>
             </button>
           </div>
@@ -178,15 +178,15 @@ export default function LoginPage() {
             </AnimatePresence>
 
             {/* Identifier Field */}
-            <div className="space-y-1.5">
-              <Label htmlFor="identifier" className="text-xs font-medium text-text-primary">
+            <div className="space-y-2">
+              <Label htmlFor="identifier" className="text-xs font-semibold text-text-primary">
                 {activeTab === 'admin' ? 'Admin Email' : 'Employee ID'}
               </Label>
               <div className="relative">
                 {activeTab === 'admin' ? (
-                  <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <Mail className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
                 ) : (
-                  <UserCheck className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                  <UserCheck className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
                 )}
                 <Input
                   id="identifier"
@@ -196,7 +196,7 @@ export default function LoginPage() {
                   }
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  className="pl-9 h-10 text-xs bg-surface border-border focus:border-primary-500 rounded-lg"
+                  className="pl-10 h-11 text-xs bg-surface border-border focus:border-primary-500 rounded-xl"
                   autoComplete="username"
                   required
                 />
@@ -204,9 +204,9 @@ export default function LoginPage() {
             </div>
 
             {/* Password Field */}
-            <div className="space-y-1.5">
+            <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <Label htmlFor="password" className="text-xs font-medium text-text-primary">
+                <Label htmlFor="password" className="text-xs font-semibold text-text-primary">
                   Password
                 </Label>
                 <a
@@ -219,27 +219,27 @@ export default function LoginPage() {
                         : 'Please ask your CRM administrator to reset your employee password.'
                     );
                   }}
-                  className="text-[11px] text-primary-600 hover:text-primary-700 hover:underline"
+                  className="text-xs text-primary-600 hover:text-primary-700 hover:underline font-medium"
                 >
                   Forgot password?
                 </a>
               </div>
               <div className="relative">
-                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
+                <Lock className="absolute left-3.5 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
                 <Input
                   id="password"
                   type={showPassword ? 'text' : 'password'}
                   placeholder="••••••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="pl-9 pr-9 h-10 text-xs bg-surface border-border focus:border-primary-500 rounded-lg"
+                  className="pl-10 pr-10 h-11 text-xs bg-surface border-border focus:border-primary-500 rounded-xl"
                   autoComplete="current-password"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 text-text-muted hover:text-text-primary"
                   tabIndex={-1}
                   aria-label={showPassword ? 'Hide password' : 'Show password'}
                 >
@@ -252,7 +252,7 @@ export default function LoginPage() {
             <Button
               type="submit"
               disabled={loading}
-              className="w-full h-10 mt-2 bg-gradient-to-r from-primary-700 to-primary-600 hover:from-primary-800 hover:to-primary-700 text-white font-medium text-xs rounded-lg shadow-sm transition-all"
+              className="w-full h-11 mt-4 bg-gradient-to-r from-primary-700 to-primary-600 hover:from-primary-800 hover:to-primary-700 text-white font-semibold text-xs rounded-xl shadow-xs transition-all"
             >
               {loading ? (
                 <div className="flex items-center gap-2">

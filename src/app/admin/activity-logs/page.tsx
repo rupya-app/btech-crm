@@ -1,110 +1,110 @@
 import React from 'react';
-import { Activity, Phone, CheckCircle2, UserPlus, Clock, Upload, Filter } from 'lucide-react';
+import Link from 'next/link';
+import { Phone, CheckCircle2, UserPlus, Clock, Activity } from 'lucide-react';
 import { formatDateTime } from '@/lib/utils';
+import { getDbClient } from '@/lib/supabase/server';
+import { AdminPageContainer, PageHeader, DataTable, DataTableRow, DataTableCell } from '@/components/common';
 
-export default function AdminActivityLogsPage() {
-  const logs = [
-    {
-      id: 'log-1',
-      actor: 'Priya Sharma (EMP1001)',
-      action: 'Call Outcome Recorded',
-      details: 'Recorded "Connected" for Apex Logistics. Remark: "Pricing proposal requested for 85 vehicles."',
-      entity: 'Lead #10001',
-      time: new Date(Date.now() - 3600000 * 1.5).toISOString(),
-      icon: Phone,
-      color: 'text-primary-600 bg-primary-50',
-    },
-    {
-      id: 'log-2',
-      actor: 'Main Administrator',
-      action: 'Leads Assigned in Bulk',
-      details: 'Allocated 50 unassigned leads to Priya Sharma and Vikram Patel via Workload Balance.',
-      entity: 'Lead Batch #24',
-      time: new Date(Date.now() - 3600000 * 3.5).toISOString(),
-      icon: UserPlus,
-      color: 'text-accent-blue bg-accent-blueSoft',
-    },
-    {
-      id: 'log-3',
-      actor: 'Vikram Patel (EMP1002)',
-      action: 'Lead Confirmed (Won Deal)',
-      details: 'Vanguard Healthtech Labs confirmed annual contract. Value recorded.',
-      entity: 'Lead #10003',
-      time: new Date(Date.now() - 3600000 * 8).toISOString(),
-      icon: CheckCircle2,
-      color: 'text-success bg-success-bg',
-    },
-    {
-      id: 'log-4',
-      actor: 'Main Administrator',
-      action: 'Excel Batch Upload Completed',
-      details: 'Ingested 15,400 rows from "Q1_Maharashtra_Gujarat_B2B_Leads.xlsx". 14,850 successful.',
-      entity: 'Import Job #1',
-      time: new Date(Date.now() - 3600000 * 24).toISOString(),
-      icon: Upload,
-      color: 'text-warning bg-warning-bg',
-    },
-    {
-      id: 'log-5',
-      actor: 'Rahul Varma (EMP1003)',
-      action: 'Follow-up Scheduled',
-      details: 'Follow-up scheduled with Amitabh Saxena (UrbanCraft Modern Furniture) for tomorrow 11 AM.',
-      entity: 'Lead #10006',
-      time: new Date(Date.now() - 3600000 * 30).toISOString(),
-      icon: Clock,
-      color: 'text-primary-600 bg-primary-50',
-    },
-  ];
+export const dynamic = 'force-dynamic';
+
+export default async function AdminActivityLogsPage() {
+  const supabase = await getDbClient();
+  const { data } = await supabase
+    .from('lead_activities')
+    .select(
+      'id, lead_id, activity_type, call_outcome, description, created_at, lead:leads(lead_number, business_name), employee:profiles(full_name, employee_id)'
+    )
+    .order('created_at', { ascending: false })
+    .limit(100);
+
+  const logs = (data || []).map((l: any) => {
+    let icon = Activity;
+    let color = 'text-primary-600 bg-primary-50';
+    let action = l.activity_type
+      .replace(/_/g, ' ')
+      .replace(/\b\w/g, (c: string) => c.toUpperCase());
+
+    if (l.call_outcome) {
+      icon = Phone;
+      action = `Call Outcome: ${l.call_outcome.replace(/_/g, ' ')}`;
+    } else if (l.activity_type.includes('assign') || l.activity_type.includes('claim')) {
+      icon = UserPlus;
+      color = 'text-accent-blue bg-accent-blue-soft';
+    } else if (l.activity_type.includes('confirm')) {
+      icon = CheckCircle2;
+      color = 'text-success bg-success-bg';
+    } else if (l.activity_type.includes('followup')) {
+      icon = Clock;
+      color = 'text-warning bg-warning-bg';
+    }
+
+    return {
+      id: l.id,
+      leadId: l.lead_id,
+      actor: l.employee
+        ? `${l.employee.full_name} (${l.employee.employee_id})`
+        : 'System / Administrator',
+      action,
+      details: l.description || 'Pipeline event recorded',
+      entity: l.lead
+        ? `Lead #${l.lead.lead_number} (${l.lead.business_name})`
+        : 'Lead Record',
+      time: l.created_at,
+      icon,
+      color,
+    };
+  });
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-          System Activity & Audit Logs
-        </h1>
-        <p className="text-xs text-text-muted mt-1">
-          Immutable event stream capturing administrative actions, call records, status transitions, and data operations.
-        </p>
-      </div>
+    <AdminPageContainer>
+      <PageHeader
+        title="System Activity & Audit Logs"
+        description="Immutable event stream capturing administrative actions, call records, status transitions, and data operations."
+      />
 
-      <div className="rounded-2xl border border-border bg-surface overflow-hidden shadow-xs">
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-surface-muted border-b border-border text-text-secondary font-semibold">
-              <tr>
-                <th className="py-3 px-4">Event & Action</th>
-                <th className="py-3 px-3">Actor / Employee</th>
-                <th className="py-3 px-3">Target Entity</th>
-                <th className="py-3 px-3">Event Details</th>
-                <th className="py-3 px-4 text-right">Timestamp</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-border-light">
-              {logs.map((l) => {
-                const Icon = l.icon;
-                return (
-                  <tr key={l.id} className="hover:bg-surface-muted/50 transition-colors">
-                    <td className="py-3.5 px-4">
-                      <div className="flex items-center gap-2.5">
-                        <div className={`p-1.5 rounded-lg shrink-0 ${l.color}`}>
-                          <Icon className="w-3.5 h-3.5" />
-                        </div>
-                        <span className="font-semibold text-text-primary">{l.action}</span>
-                      </div>
-                    </td>
-                    <td className="py-3.5 px-3 font-medium text-text-secondary">{l.actor}</td>
-                    <td className="py-3.5 px-3 font-semibold text-primary-700">{l.entity}</td>
-                    <td className="py-3.5 px-3 text-text-secondary max-w-md">{l.details}</td>
-                    <td className="py-3.5 px-4 text-right tabular-nums text-text-muted">
-                      {formatDateTime(l.time)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
+      <DataTable
+        headers={[
+          { label: 'Event & Action' },
+          { label: 'Actor / Employee' },
+          { label: 'Target Entity' },
+          { label: 'Event Details' },
+          { label: 'Timestamp', align: 'right' },
+        ]}
+        isEmpty={logs.length === 0}
+        emptyState={
+          <span className="text-sm text-text-muted">
+            No activity logs recorded in the database yet.
+          </span>
+        }
+      >
+        {logs.map((l) => {
+          const Icon = l.icon;
+          return (
+            <DataTableRow key={l.id}>
+              <DataTableCell>
+                <div className="flex items-center" style={{ gap: '12px' }}>
+                  <div className={`p-2 rounded-xl shrink-0 ${l.color}`}>
+                    <Icon className="w-4 h-4" />
+                  </div>
+                  <span className="font-semibold text-text-primary">{l.action}</span>
+                </div>
+              </DataTableCell>
+              <DataTableCell className="font-medium text-text-secondary">{l.actor}</DataTableCell>
+              <DataTableCell className="font-semibold text-primary-700">
+                <Link href={`/admin/leads/${l.leadId}`} className="hover:underline">
+                  {l.entity}
+                </Link>
+              </DataTableCell>
+              <DataTableCell className="text-text-secondary max-w-md leading-relaxed">
+                {l.details}
+              </DataTableCell>
+              <DataTableCell align="right" className="tabular-nums text-text-muted whitespace-nowrap">
+                {formatDateTime(l.time)}
+              </DataTableCell>
+            </DataTableRow>
+          );
+        })}
+      </DataTable>
+    </AdminPageContainer>
   );
 }

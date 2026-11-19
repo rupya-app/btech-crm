@@ -10,21 +10,35 @@ import {
   ExternalLink,
   MessageSquare,
   Clock,
-  CheckCircle2,
-  AlertCircle,
   MessageCircle,
-  Search,
-  Filter,
-  ArrowUpDown,
   ChevronLeft,
   ChevronRight,
-  Download,
   UserCheck,
-  ShieldAlert,
+  Briefcase,
 } from 'lucide-react';
-import { Lead, LeadStatus, LeadPriority } from '@/types';
+import { Lead } from '@/types';
+import { LeadStatusCounts } from '@/services/leads.service';
 import { LeadStatusBadge } from './lead-status-badge';
 import { LeadPriorityBadge } from './lead-priority-badge';
+import { SegmentedStatusTabs } from '@/components/common/segmented-status-tabs';
+import { PageToolbar } from '@/components/common/page-toolbar';
+import { EmptyState } from '@/components/common/empty-state';
+import { SuccessNotice } from '@/components/common/success-notice';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,7 +55,6 @@ import {
   getTelUrl,
   formatDate,
   formatNumber,
-  truncate,
 } from '@/lib/utils';
 
 interface LeadTableProps {
@@ -51,6 +64,7 @@ interface LeadTableProps {
   pageSize: number;
   totalPages: number;
   isAdmin?: boolean;
+  statusCounts?: LeadStatusCounts;
   onAssignSelected?: (leadIds: string[]) => void;
   onClaimLead?: (leadId: string) => void;
   isPoolView?: boolean;
@@ -58,7 +72,13 @@ interface LeadTableProps {
 
 export function LeadTable(props: LeadTableProps) {
   return (
-    <React.Suspense fallback={<div className="p-8 text-center text-xs text-text-muted">Loading leads...</div>}>
+    <React.Suspense
+      fallback={
+        <div className="p-12 text-center text-sm text-text-muted" style={{ padding: '48px' }}>
+          Loading sales pipeline...
+        </div>
+      }
+    >
       <LeadTableInternal {...props} />
     </React.Suspense>
   );
@@ -68,9 +88,9 @@ function LeadTableInternal({
   initialLeads,
   total,
   page,
-  pageSize,
   totalPages,
   isAdmin = true,
+  statusCounts,
   onAssignSelected,
   onClaimLead,
   isPoolView = false,
@@ -79,12 +99,73 @@ function LeadTableInternal({
   const searchParams = useSearchParams();
 
   const [selectedLeads, setSelectedLeads] = useState<string[]>([]);
-  const [searchInput, setSearchInput] = useState(searchParams.get('search') || '');
+  const [isAssignModalOpen, setIsAssignModalOpen] = useState(false);
+  const [reps, setReps] = useState<Array<{ id: string; full_name: string; employee_id: string }>>([]);
+  const [targetRepId, setTargetRepId] = useState<string>('workload');
+  const [bulkQtyMode, setBulkQtyMode] = useState<'selected' | 'quantity'>('selected');
+  const [customQty, setCustomQty] = useState<string>('100');
+  const [assignAllUnassigned, setAssignAllUnassigned] = useState<boolean>(false);
+  const [assigningBulk, setAssigningBulk] = useState(false);
+  const [bulkNotice, setBulkNotice] = useState<string | null>(null);
 
-  // Selection handlers
+  const openBulkAssignModal = async (mode: 'selected' | 'quantity' = 'selected') => {
+    if (mode === 'selected' && onAssignSelected && selectedLeads.length > 0) {
+      onAssignSelected(selectedLeads);
+      return;
+    }
+    setBulkQtyMode(selectedLeads.length > 0 && mode === 'selected' ? 'selected' : 'quantity');
+    setIsAssignModalOpen(true);
+    try {
+      const res = await fetch('/api/employees');
+      const data = await res.json();
+      const activeReps = (data.employees || []).filter((e: any) => e.is_active !== false);
+      setReps(activeReps);
+    } catch {}
+  };
+
+  const handleBulkAssignSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+
+    setAssigningBulk(true);
+    try {
+      const isBalanced = targetRepId === 'workload' || targetRepId === 'round_robin';
+      const payload: Record<string, any> = {
+        mode: isBalanced ? targetRepId : 'single',
+        employeeId: isBalanced ? undefined : targetRepId,
+      };
+
+      if (bulkQtyMode === 'selected' && selectedLeads.length > 0) {
+        payload.leadIds = selectedLeads;
+      } else {
+        payload.assignAll = assignAllUnassigned;
+        payload.count = parseInt(customQty, 10) || 100;
+        payload.statusFilter = currentStatus;
+      }
+
+      const res = await fetch('/api/leads/assign', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+
+      setBulkNotice(data.message);
+      setSelectedLeads([]);
+      setIsAssignModalOpen(false);
+      router.refresh();
+    } catch (err: any) {
+      alert(err.message || 'Failed to assign leads');
+    } finally {
+      setAssigningBulk(false);
+    }
+  };
+
+  const unassignedInPage = initialLeads.filter((l: any) => !l.assigned_rep);
+
   const handleSelectAll = (checked: boolean) => {
     if (checked) {
-      setSelectedLeads(initialLeads.map((l) => l.id));
+      setSelectedLeads(unassignedInPage.map((l) => l.id));
     } else {
       setSelectedLeads([]);
     }
@@ -98,32 +179,6 @@ function LeadTableInternal({
     }
   };
 
-  // Search submission
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const params = new URLSearchParams(searchParams.toString());
-    if (searchInput.trim()) {
-      params.set('search', searchInput.trim());
-    } else {
-      params.delete('search');
-    }
-    params.set('page', '1');
-    router.push(`?${params.toString()}`);
-  };
-
-  // Status Filter Change
-  const handleStatusFilter = (status: string) => {
-    const params = new URLSearchParams(searchParams.toString());
-    if (status === 'all') {
-      params.delete('status');
-    } else {
-      params.set('status', status);
-    }
-    params.set('page', '1');
-    router.push(`?${params.toString()}`);
-  };
-
-  // Pagination Change
   const handlePageChange = (newPage: number) => {
     const params = new URLSearchParams(searchParams.toString());
     params.set('page', newPage.toString());
@@ -133,72 +188,64 @@ function LeadTableInternal({
   const currentStatus = searchParams.get('status') || 'all';
 
   return (
-    <div className="space-y-4">
-      {/* Top Filter and Search Controls */}
-      <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 bg-surface p-4 rounded-2xl border border-border shadow-xs">
-        {/* Search */}
-        <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-text-muted" />
-          <Input
-            type="search"
-            placeholder="Search business name, phone, email, contact..."
-            value={searchInput}
-            onChange={(e) => setSearchInput(e.target.value)}
-            className="pl-9 h-9 text-xs bg-surface-muted/50 border-border focus:border-primary-500 rounded-lg"
-          />
-        </form>
+    <div
+      className="flex flex-col gap-5 w-full min-w-0"
+      style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}
+    >
+      {/* 1. Dedicated Color-Coded Segmented Stage Tabs Bar */}
+      <SegmentedStatusTabs statusCounts={statusCounts} />
 
-        {/* Filter Pills */}
-        <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0">
-          {[
-            { id: 'all', label: 'All Leads' },
-            { id: 'new', label: 'New' },
-            { id: 'contacted', label: 'Contacted' },
-            { id: 'interested', label: 'Interested' },
-            { id: 'follow_up', label: 'Follow-up' },
-            { id: 'pending', label: 'Pending' },
-            { id: 'confirmed', label: 'Confirmed' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => handleStatusFilter(tab.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap transition-colors ${
-                currentStatus === tab.id
-                  ? 'bg-primary-50 text-primary-700 font-semibold border border-primary-200'
-                  : 'text-text-muted hover:text-text-primary hover:bg-surface-muted'
-              }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+      {/* 2. Page Toolbar with Search, Bulk Quantity Assign & Record Summary */}
+      <PageToolbar searchPlaceholder="Search business name, phone, email, contact person, or city...">
+        {isAdmin && (
+          <Button
+            type="button"
+            variant="default"
+            onClick={() => openBulkAssignModal('quantity')}
+          >
+            <UserCheck className="w-4 h-4" />
+            <span>Bulk Assign by Quantity</span>
+          </Button>
+        )}
+        <div
+          className="text-[13px] text-text-muted font-medium bg-[#F8FAFB] rounded-xl border border-border"
+          style={{ padding: '9px 16px' }}
+        >
+          Showing <strong className="text-text-primary font-semibold">{initialLeads.length}</strong> of{' '}
+          <strong className="text-text-primary font-semibold">{formatNumber(total)}</strong> leads
         </div>
-      </div>
+      </PageToolbar>
+
+      {bulkNotice && <SuccessNotice message={bulkNotice} />}
 
       {/* Bulk Action Bar (when rows are selected) */}
       {selectedLeads.length > 0 && (
-        <div className="flex items-center justify-between px-4 py-3 bg-primary-50 border border-primary-200 rounded-xl text-xs animate-in fade-in-50">
+        <div
+          className="flex items-center justify-between bg-primary-50 border border-primary-200 rounded-2xl text-xs animate-in fade-in-50"
+          style={{ padding: '14px 24px' }}
+        >
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-primary-900">
-              {selectedLeads.length} leads selected
+            <span className="font-semibold text-primary-900 text-sm">
+              {selectedLeads.length} lead{selectedLeads.length > 1 ? 's' : ''} selected
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            {isAdmin && onAssignSelected && (
+          <div className="flex items-center gap-2.5" style={{ gap: '10px' }}>
+            {isAdmin && (
               <Button
                 size="sm"
-                onClick={() => onAssignSelected(selectedLeads)}
-                className="h-8 text-xs bg-primary-600 hover:bg-primary-700 text-white"
+                onClick={() => openBulkAssignModal('selected')}
+                className="h-9 text-xs bg-primary-600 hover:bg-primary-700 text-white px-4 rounded-xl shadow-xs"
               >
-                <UserCheck className="w-3.5 h-3.5 mr-1.5" />
-                <span>Assign to Employee</span>
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Assign Selected ({selectedLeads.length})</span>
               </Button>
             )}
             <Button
               variant="outline"
               size="sm"
               onClick={() => setSelectedLeads([])}
-              className="h-8 text-xs border-primary-200 text-primary-800 hover:bg-primary-100"
+              className="h-9 text-xs border-primary-200 text-primary-800 hover:bg-primary-100 rounded-xl px-4"
             >
               Deselect All
             </Button>
@@ -206,45 +253,84 @@ function LeadTableInternal({
         </div>
       )}
 
-      {/* Main Table */}
-      <div className="rounded-2xl border border-border bg-surface overflow-hidden shadow-xs">
+      {/* 3. Main Data Table (Header 48px, Row 66px, 16px cell padding, 13-14px font) */}
+      <div className="rounded-2xl border border-border bg-white overflow-hidden shadow-xs">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs">
-            <thead className="bg-surface-muted border-b border-border text-text-secondary font-semibold">
-              <tr>
-                <th className="py-3 px-4 w-10">
+          <table className="w-full text-left text-sm border-collapse">
+            <thead className="bg-[#F8FAFB] border-b border-border text-text-secondary text-[12px] font-semibold uppercase tracking-wider">
+              <tr style={{ height: '48px' }}>
+                <th className="w-12 text-center" style={{ padding: '12px 16px' }}>
                   <Checkbox
+                    disabled={unassignedInPage.length === 0}
                     checked={
-                      initialLeads.length > 0 &&
-                      selectedLeads.length === initialLeads.length
+                      unassignedInPage.length > 0 &&
+                      selectedLeads.length === unassignedInPage.length
                     }
                     onCheckedChange={(checked) => handleSelectAll(!!checked)}
-                    aria-label="Select all"
+                    aria-label="Select all unassigned leads"
                   />
                 </th>
-                <th className="py-3 px-3">Lead ID</th>
-                <th className="py-3 px-3">Business & Contact</th>
-                <th className="py-3 px-3">Category</th>
-                <th className="py-3 px-3">Contact Channels</th>
-                <th className="py-3 px-3">Status</th>
-                <th className="py-3 px-3">Priority</th>
-                <th className="py-3 px-3">Created</th>
-                <th className="py-3 px-4 text-right">Actions</th>
+                <th className="font-semibold whitespace-nowrap w-28" style={{ padding: '12px 16px' }}>
+                  Lead ID
+                </th>
+                <th className="font-semibold min-w-[230px]" style={{ padding: '12px 16px' }}>
+                  Business & Contact
+                </th>
+                <th className="font-semibold whitespace-nowrap w-44" style={{ padding: '12px 16px' }}>
+                  Assigned To
+                </th>
+                <th className="font-semibold whitespace-nowrap w-44" style={{ padding: '12px 16px' }}>
+                  Category
+                </th>
+                <th className="font-semibold whitespace-nowrap w-60" style={{ padding: '12px 16px' }}>
+                  Contact Channels
+                </th>
+                <th className="font-semibold whitespace-nowrap w-40" style={{ padding: '12px 16px' }}>
+                  Stage
+                </th>
+                <th className="font-semibold whitespace-nowrap w-28" style={{ padding: '12px 16px' }}>
+                  Priority
+                </th>
+                <th className="font-semibold whitespace-nowrap w-32" style={{ padding: '12px 16px' }}>
+                  Created
+                </th>
+                <th className="text-right font-semibold whitespace-nowrap w-20" style={{ padding: '12px 16px' }}>
+                  Actions
+                </th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-border-light">
+            <tbody className="divide-y divide-border/70">
               {initialLeads.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className="py-12 text-center text-text-muted">
-                    <div className="flex flex-col items-center justify-center">
-                      <AlertCircle className="w-8 h-8 text-text-muted/60 mb-2" />
-                      <p className="text-sm font-medium text-text-secondary">No leads found</p>
-                      <p className="text-xs mt-1">Try adjusting your search criteria or filters</p>
-                    </div>
+                  <td colSpan={10} style={{ padding: '48px 24px' }}>
+                    <EmptyState
+                      icon={Briefcase}
+                      title="No matching leads in this pipeline stage"
+                      description={`There are currently no leads matching "${currentStatus === 'all' ? 'your search' : currentStatus}". Try selecting a different stage tab or clearing search filters.`}
+                      action={
+                        currentStatus !== 'all' ? (
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={() => {
+                              const params = new URLSearchParams(searchParams.toString());
+                              params.delete('status');
+                              params.set('page', '1');
+                              router.push(`?${params.toString()}`);
+                            }}
+                            className="h-9 px-4 rounded-xl text-xs font-semibold text-primary-700 border-primary-200 hover:bg-primary-50"
+                          >
+                            View All Pipeline Leads
+                          </Button>
+                        ) : undefined
+                      }
+                    />
                   </td>
                 </tr>
               ) : (
                 initialLeads.map((lead) => {
+                  const assignedRep = (lead as any).assigned_rep;
+                  const isAlreadyAssigned = Boolean(assignedRep);
                   const isSelected = selectedLeads.includes(lead.id);
                   const detailUrl = isAdmin
                     ? `/admin/leads/${lead.id}`
@@ -255,62 +341,106 @@ function LeadTableInternal({
                   return (
                     <tr
                       key={lead.id}
-                      className={`hover:bg-surface-muted/60 transition-colors ${
+                      className={`hover:bg-[#F8FAFB] transition-colors ${
                         isSelected ? 'bg-primary-50/40' : ''
                       }`}
+                      style={{ height: '66px' }}
                     >
-                      {/* Checkbox */}
-                      <td className="py-3.5 px-4">
+                      {/* Checkbox (Locked if already assigned to prevent duplicate allocation) */}
+                      <td
+                        className="text-center"
+                        style={{ padding: '14px 16px' }}
+                        title={
+                          isAlreadyAssigned
+                            ? `Already assigned to ${assignedRep.full_name} — locked against duplicate assignment`
+                            : 'Select lead for assignment'
+                        }
+                      >
                         <Checkbox
+                          disabled={isAlreadyAssigned}
                           checked={isSelected}
                           onCheckedChange={(checked) =>
-                            handleSelectOne(lead.id, !!checked)
+                            !isAlreadyAssigned && handleSelectOne(lead.id, !!checked)
                           }
                           aria-label={`Select lead ${lead.lead_number}`}
                         />
                       </td>
 
                       {/* Lead Number */}
-                      <td className="py-3.5 px-3 font-semibold text-primary-700 tabular-nums">
+                      <td
+                        className="font-bold text-primary-700 tabular-nums whitespace-nowrap text-[13.5px]"
+                        style={{ padding: '14px 16px' }}
+                      >
                         <Link href={detailUrl} className="hover:underline">
                           #{lead.lead_number}
                         </Link>
                       </td>
 
                       {/* Business & Contact Person */}
-                      <td className="py-3.5 px-3">
-                        <div className="flex flex-col">
+                      <td style={{ padding: '14px 16px' }}>
+                        <div className="flex flex-col" style={{ gap: '2px' }}>
                           <Link
                             href={detailUrl}
-                            className="font-semibold text-text-primary hover:text-primary-600 transition-colors truncate max-w-[220px]"
+                            className="font-bold text-text-primary hover:text-primary-600 transition-colors text-[14px] truncate max-w-[260px]"
                           >
                             {lead.business_name}
                           </Link>
                           {lead.contact_person && (
-                            <span className="text-[11px] text-text-muted mt-0.5 truncate max-w-[200px]">
+                            <span className="text-[12.5px] text-text-muted truncate max-w-[240px]">
                               {lead.contact_person}
+                              {lead.city ? ` • ${lead.city}` : ''}
                             </span>
                           )}
                         </div>
                       </td>
 
+                      {/* Assigned To (Exclusive Ownership Indicator) */}
+                      <td className="whitespace-nowrap" style={{ padding: '14px 16px' }}>
+                        {assignedRep ? (
+                          <Link
+                            href={isAdmin ? `/admin/employees/${assignedRep.id}` : '#'}
+                            className="inline-flex items-center rounded-full bg-[#E8F3F1] text-[#0E5F58] border border-[#A3DCD5] text-[12px] font-semibold hover:bg-[#DDF2EE] transition-colors"
+                            style={{ padding: '4px 10px', gap: '6px' }}
+                            title="Exclusively assigned — protected from duplicate allocation"
+                          >
+                            <UserCheck className="w-3.5 h-3.5 text-[#147D72] shrink-0" />
+                            <span>
+                              {assignedRep.full_name}
+                              {assignedRep.employee_id ? ` (${assignedRep.employee_id})` : ''}
+                            </span>
+                          </Link>
+                        ) : (
+                          <span
+                            className="inline-flex items-center rounded-full bg-[#EEF2FF] text-[#4338CA] border border-[#C7D2FE] text-[12px] font-semibold"
+                            style={{ padding: '4px 10px', gap: '6px' }}
+                          >
+                            <span className="w-2 h-2 rounded-full bg-[#6366F1]" />
+                            <span>Unassigned Pool</span>
+                          </span>
+                        )}
+                      </td>
+
                       {/* Category */}
-                      <td className="py-3.5 px-3 text-text-secondary">
-                        <span className="truncate max-w-[140px] block" title={lead.category || ''}>
+                      <td
+                        className="text-text-secondary font-medium text-[13px] whitespace-nowrap"
+                        style={{ padding: '14px 16px' }}
+                      >
+                        <span className="truncate max-w-[170px] block" title={lead.category || ''}>
                           {lead.category || '—'}
                         </span>
                       </td>
 
                       {/* Contact Channels (Direct Call & WhatsApp) */}
-                      <td className="py-3.5 px-3">
-                        <div className="flex items-center gap-1.5">
+                      <td style={{ padding: '14px 16px' }}>
+                        <div className="flex items-center" style={{ gap: '8px' }}>
                           {telUrl && (
                             <a
                               href={telUrl}
-                              className="inline-flex items-center gap-1 px-2 py-1 rounded-md bg-surface-muted hover:bg-primary-50 hover:text-primary-700 text-text-secondary border border-border text-[11px] font-medium transition-colors"
+                              className="inline-flex items-center rounded-lg bg-[#F8FAFB] hover:bg-primary-50 hover:text-primary-700 text-text-secondary border border-border text-xs font-semibold transition-colors whitespace-nowrap"
+                              style={{ padding: '6px 10px', gap: '6px' }}
                               title={`Call ${lead.phone}`}
                             >
-                              <Phone className="w-3 h-3 text-primary-600" />
+                              <Phone className="w-3.5 h-3.5 text-primary-600 shrink-0" />
                               <span className="tabular-nums">{lead.phone}</span>
                             </a>
                           )}
@@ -320,7 +450,8 @@ function LeadTableInternal({
                               href={waUrl}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="p-1 rounded-md bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors"
+                              className="rounded-lg bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition-colors inline-flex items-center justify-center"
+                              style={{ padding: '7px' }}
                               title="Chat on WhatsApp"
                             >
                               <MessageCircle className="w-3.5 h-3.5" />
@@ -330,7 +461,8 @@ function LeadTableInternal({
                           {lead.email && (
                             <a
                               href={`mailto:${lead.email}`}
-                              className="p-1 rounded-md bg-surface-muted hover:bg-surface text-text-muted hover:text-text-primary border border-border transition-colors"
+                              className="rounded-lg bg-[#F8FAFB] hover:bg-white text-text-muted hover:text-text-primary border border-border transition-colors inline-flex items-center justify-center"
+                              style={{ padding: '7px' }}
                               title={`Email: ${lead.email}`}
                             >
                               <Mail className="w-3.5 h-3.5" />
@@ -340,27 +472,30 @@ function LeadTableInternal({
                       </td>
 
                       {/* Status */}
-                      <td className="py-3.5 px-3">
+                      <td className="whitespace-nowrap" style={{ padding: '14px 16px' }}>
                         <LeadStatusBadge status={lead.status} />
                       </td>
 
                       {/* Priority */}
-                      <td className="py-3.5 px-3">
+                      <td className="whitespace-nowrap" style={{ padding: '14px 16px' }}>
                         <LeadPriorityBadge priority={lead.priority} />
                       </td>
 
                       {/* Created Date */}
-                      <td className="py-3.5 px-3 text-text-muted tabular-nums">
+                      <td
+                        className="text-text-muted tabular-nums whitespace-nowrap text-[12.5px]"
+                        style={{ padding: '14px 16px' }}
+                      >
                         {formatDate(lead.created_at)}
                       </td>
 
                       {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
+                      <td className="text-right whitespace-nowrap" style={{ padding: '14px 16px' }}>
                         {isPoolView ? (
                           <Button
                             size="sm"
                             onClick={() => onClaimLead && onClaimLead(lead.id)}
-                            className="h-7 text-xs bg-primary-600 hover:bg-primary-700 text-white font-medium px-3 rounded-lg shadow-2xs"
+                            className="h-8.5 text-xs bg-primary-600 hover:bg-primary-700 text-white font-medium px-3.5 rounded-lg shadow-xs"
                           >
                             Claim Lead
                           </Button>
@@ -370,7 +505,7 @@ function LeadTableInternal({
                               <Button
                                 variant="ghost"
                                 size="icon"
-                                className="h-7 w-7 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-muted"
+                                className="h-8 w-8 rounded-lg text-text-muted hover:text-text-primary hover:bg-[#F8FAFB]"
                               >
                                 <MoreHorizontal className="w-4 h-4" />
                               </Button>
@@ -417,26 +552,29 @@ function LeadTableInternal({
         </div>
 
         {/* Server-Side Pagination Bar */}
-        <div className="flex items-center justify-between px-4 py-3 border-t border-border bg-surface text-xs text-text-secondary">
+        <div
+          className="flex items-center justify-between border-t border-border bg-[#F8FAFB] text-[13px] text-text-secondary"
+          style={{ padding: '16px 24px' }}
+        >
           <div className="flex items-center gap-2">
             <span>
-              Showing <strong className="text-text-primary">{initialLeads.length}</strong> of{' '}
-              <strong className="text-text-primary">{formatNumber(total)}</strong> leads
+              Showing <strong className="text-text-primary font-semibold">{initialLeads.length}</strong> of{' '}
+              <strong className="text-text-primary font-semibold">{formatNumber(total)}</strong> leads
             </span>
           </div>
 
-          <div className="flex items-center gap-2">
-            <span className="text-text-muted">
+          <div className="flex items-center gap-3" style={{ gap: '12px' }}>
+            <span className="text-text-muted font-medium text-xs">
               Page {page} of {totalPages || 1}
             </span>
 
-            <div className="flex items-center gap-1">
+            <div className="flex items-center gap-1.5" style={{ gap: '6px' }}>
               <Button
                 variant="outline"
                 size="icon"
                 disabled={page <= 1}
                 onClick={() => handlePageChange(page - 1)}
-                className="h-8 w-8 text-xs"
+                className="h-9 w-9 rounded-xl border-border bg-white"
               >
                 <ChevronLeft className="w-4 h-4" />
               </Button>
@@ -445,7 +583,7 @@ function LeadTableInternal({
                 size="icon"
                 disabled={page >= totalPages}
                 onClick={() => handlePageChange(page + 1)}
-                className="h-8 w-8 text-xs"
+                className="h-9 w-9 rounded-xl border-border bg-white"
               >
                 <ChevronRight className="w-4 h-4" />
               </Button>
@@ -453,6 +591,153 @@ function LeadTableInternal({
           </div>
         </div>
       </div>
+
+      {/* Bulk Assign Leads Modal (Supports both Checked Rows & Large Quantity Batching) */}
+      <Dialog open={isAssignModalOpen} onOpenChange={setIsAssignModalOpen}>
+        <DialogContent className="sm:max-w-[520px]">
+          <DialogHeader>
+            <DialogTitle>
+              {bulkQtyMode === 'selected' && selectedLeads.length > 0
+                ? `Assign ${selectedLeads.length} Selected Lead(s)`
+                : 'High-Volume Bulk Lead Assignment'}
+            </DialogTitle>
+            <DialogDescription>
+              Assign leads in bulk to a single representative or distribute them evenly across your sales team.
+            </DialogDescription>
+          </DialogHeader>
+
+          <form onSubmit={handleBulkAssignSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+            {selectedLeads.length > 0 && (
+              <div className="grid grid-cols-2" style={{ gap: '8px' }}>
+                <button
+                  type="button"
+                  onClick={() => setBulkQtyMode('selected')}
+                  className="rounded-xl border text-xs font-bold transition-all cursor-pointer"
+                  style={{
+                    padding: '10px',
+                    backgroundColor: bulkQtyMode === 'selected' ? '#E8F3F1' : '#F8FAFB',
+                    color: bulkQtyMode === 'selected' ? '#0E5F58' : '#68717D',
+                    borderColor: bulkQtyMode === 'selected' ? '#24988A' : '#E7EAEE',
+                  }}
+                >
+                  Checked Rows ({selectedLeads.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkQtyMode('quantity')}
+                  className="rounded-xl border text-xs font-bold transition-all cursor-pointer"
+                  style={{
+                    padding: '10px',
+                    backgroundColor: bulkQtyMode === 'quantity' ? '#E8F3F1' : '#F8FAFB',
+                    color: bulkQtyMode === 'quantity' ? '#0E5F58' : '#68717D',
+                    borderColor: bulkQtyMode === 'quantity' ? '#24988A' : '#E7EAEE',
+                  }}
+                >
+                  Custom Large Quantity
+                </button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <label className="text-[13px] font-semibold text-text-primary">
+                Target Representative / Distribution Strategy
+              </label>
+              <Select value={targetRepId} onValueChange={(val) => setTargetRepId(val || 'workload')}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Choose assignment target" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="workload">Auto: Workload Balanced Across Team</SelectItem>
+                  <SelectItem value="round_robin">Auto: Equal Round-Robin Split Across Team</SelectItem>
+                  {reps.map((r) => (
+                    <SelectItem key={r.id} value={r.id}>
+                      Direct to Rep: {r.full_name} ({r.employee_id})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {bulkQtyMode === 'quantity' && (
+              <>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <label className="text-[13px] font-semibold text-text-primary">
+                    Quick Quantity Presets
+                  </label>
+                  <div className="grid grid-cols-3" style={{ gap: '8px' }}>
+                    {[
+                      { label: '50 Leads', val: '50', isAll: false },
+                      { label: '100 Leads', val: '100', isAll: false },
+                      { label: '250 Leads', val: '250', isAll: false },
+                      { label: '500 Leads', val: '500', isAll: false },
+                      { label: '1,000 Leads', val: '1000', isAll: false },
+                      {
+                        label: `All Unassigned (${formatNumber(statusCounts?.unassigned ?? total)})`,
+                        val: String(statusCounts?.unassigned ?? total),
+                        isAll: true,
+                      },
+                    ].map((p) => {
+                      const active = p.isAll
+                        ? assignAllUnassigned
+                        : !assignAllUnassigned && customQty === p.val;
+                      return (
+                        <button
+                          key={p.label}
+                          type="button"
+                          onClick={() => {
+                            setAssignAllUnassigned(p.isAll);
+                            setCustomQty(p.val);
+                          }}
+                          className="rounded-xl border text-xs font-bold tabular-nums transition-all cursor-pointer"
+                          style={{
+                            padding: '10px 6px',
+                            backgroundColor: active ? '#147D72' : '#F8FAFB',
+                            color: active ? '#FFFFFF' : '#525B68',
+                            borderColor: active ? '#147D72' : '#E7EAEE',
+                          }}
+                        >
+                          {p.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+                  <label className="text-[13px] font-semibold text-text-primary">
+                    Or Type Any Exact Quantity
+                  </label>
+                  <Input
+                    type="number"
+                    min={1}
+                    placeholder="e.g. 150, 400, 925..."
+                    value={assignAllUnassigned ? statusCounts?.unassigned ?? total : customQty}
+                    onChange={(e) => {
+                      setAssignAllUnassigned(false);
+                      setCustomQty(e.target.value);
+                    }}
+                  />
+                </div>
+              </>
+            )}
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setIsAssignModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button type="submit" disabled={assigningBulk}>
+                {assigningBulk
+                  ? 'Allocating Leads...'
+                  : bulkQtyMode === 'selected' && selectedLeads.length > 0
+                  ? `Confirm Assignment (${selectedLeads.length})`
+                  : assignAllUnassigned
+                  ? `Allocate All Unassigned Leads`
+                  : `Allocate ${customQty} Leads Now`}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import React from 'react';
+import { cookies } from 'next/headers';
 import { DashboardShell } from '@/components/layout/dashboard-shell';
-import { createServerSupabaseClient } from '@/lib/supabase/server';
 
 export default async function AdminLayout({
   children,
@@ -23,29 +23,21 @@ export default async function AdminLayout({
   };
 
   try {
-    const supabase = await createServerSupabaseClient();
-    const { data: { user: authUser } } = await supabase.auth.getUser();
-    if (authUser) {
-      const { data: profile } = await supabase
-        .from('profiles')
-        .select('*')
-        .eq('id', authUser.id)
-        .single();
-
-      if (profile) {
+    const cookieStore = await cookies();
+    const cached = cookieStore.get('crm_profile')?.value;
+    if (cached) {
+      const parsed = JSON.parse(decodeURIComponent(cached));
+      if (parsed?.id) {
         user = {
-          id: profile.id,
-          fullName: profile.full_name || 'Admin',
-          email: profile.email || authUser.email || '',
-          employeeId: profile.employee_id || 'ADM001',
+          id: parsed.id,
+          fullName: parsed.fullName || 'Main Administrator',
+          email: parsed.email || 'admin@digitalcrm.com',
+          employeeId: parsed.employeeId || 'ADM001',
           role: 'admin',
-          avatarUrl: profile.avatar_url || undefined,
         };
       }
     }
-  } catch (err) {
-    // Graceful fallback for local development or when Supabase keys are not set yet
-  }
+  } catch {}
 
   return (
     <DashboardShell role="admin" user={user}>

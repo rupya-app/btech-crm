@@ -40,19 +40,23 @@ function MainContent({
   const sections = role === 'admin' ? adminNavSections : employeeNavSections;
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
+    <div className="min-h-screen bg-[#F4F6F9] flex flex-col w-full">
       <Sidebar sections={sections} role={role} />
-      
-      {/* Dynamic margin matching sidebar width */}
+
+      {/* Dynamic margin offset guaranteeing zero overlap and zero horizontal overflow */}
       <div
         className={cn(
-          'flex flex-col flex-1 transition-[margin] duration-200 ease-in-out',
-          isCollapsed ? 'md:ml-[76px]' : 'md:ml-[248px]'
+          'app-main-layout flex flex-col flex-1 min-w-0',
+          isCollapsed && 'collapsed'
         )}
       >
         <Topbar user={user} notifications={notifications} />
-        
-        <main className="flex-1 p-4 sm:p-6 lg:p-8 max-w-[1600px] w-full mx-auto animate-in fade-in-50 duration-200">
+
+        {/* Modern SaaS Main Workspace: 36px horizontal padding, 32px vertical padding */}
+        <main
+          className="flex-1 w-full min-w-0 px-6 py-7 sm:px-8 sm:py-8 lg:px-9 lg:py-8 box-border overflow-x-hidden"
+          style={{ padding: '32px 36px' }}
+        >
           {children}
         </main>
       </div>

@@ -1,74 +1,77 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import Link from 'next/link';
 import {
   Clock,
   Phone,
   Calendar,
   CheckCircle2,
-  AlertCircle,
   User,
   ArrowRight,
-  Filter,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { formatDateTime } from '@/lib/utils';
+import {
+  AdminPageContainer,
+  PageHeader,
+  FilterTabs,
+  PageCard,
+  SuccessNotice,
+} from '@/components/common';
+
+interface FollowupItem {
+  id: string;
+  leadId: string;
+  businessName: string;
+  contact: string;
+  phone: string;
+  time: string;
+  purpose: string;
+  assignedTo: string;
+  status: string;
+}
 
 export default function AdminFollowupsPage() {
   const [filter, setFilter] = useState<'all' | 'due_today' | 'overdue' | 'completed'>('all');
+  const [followups, setFollowups] = useState<FollowupItem[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const [followups, setFollowups] = useState([
-    {
-      id: 'f-1',
-      businessName: 'Apex Logistics & Freight Solutions',
-      contact: 'Rajesh Verma',
-      phone: '+91 98201 12345',
-      time: new Date(Date.now() + 3600000 * 2).toISOString(),
-      purpose: 'Product Demo & Pricing Discussion',
-      assignedTo: 'Priya Sharma (EMP1001)',
-      status: 'due_today',
-      leadId: 'b0000000-0000-0000-0000-000000000001',
-    },
-    {
-      id: 'f-2',
-      businessName: 'Zenith Precision Engineering',
-      contact: 'Karthik Sundaram',
-      phone: '+91 98401 22334',
-      time: new Date(Date.now() + 3600000 * 4).toISOString(),
-      purpose: 'Technical integration review',
-      assignedTo: 'Vikram Patel (EMP1002)',
-      status: 'due_today',
-      leadId: 'b0000000-0000-0000-0000-000000000004',
-    },
-    {
-      id: 'f-3',
-      businessName: 'BlueWave Digital Marketing',
-      contact: 'Sneha Kapoor',
-      phone: '+91 98112 98765',
-      time: new Date(Date.now() - 3600000 * 24).toISOString(),
-      purpose: 'Budget approval confirmation',
-      assignedTo: 'Rahul Varma (EMP1003)',
-      status: 'overdue',
-      leadId: 'b0000000-0000-0000-0000-000000000002',
-    },
-    {
-      id: 'f-4',
-      businessName: 'UrbanCraft Modern Furniture',
-      contact: 'Amitabh Saxena',
-      phone: '+91 99887 66554',
-      time: new Date(Date.now() + 3600000 * 28).toISOString(),
-      purpose: 'Contract terms sign-off',
-      assignedTo: 'Rahul Varma (EMP1003)',
-      status: 'scheduled',
-      leadId: 'b0000000-0000-0000-0000-000000000006',
-    },
-  ]);
+  const fetchFollowups = async () => {
+    try {
+      setLoading(true);
+      const res = await fetch('/api/follow-ups');
+      const data = await res.json();
+      setFollowups(data.followups || []);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-  const markCompleted = (id: string) => {
-    setFollowups((prev) =>
-      prev.map((f) => (f.id === id ? { ...f, status: 'completed' } : f))
-    );
+  useEffect(() => {
+    fetchFollowups();
+  }, []);
+
+  const markCompleted = async (id: string, businessName: string) => {
+    try {
+      const res = await fetch('/api/follow-ups', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id, status: 'completed' }),
+      });
+
+      if (res.ok) {
+        setFollowups((prev) =>
+          prev.map((f) => (f.id === id ? { ...f, status: 'completed' } : f))
+        );
+        setNotice(`Follow-up for "${businessName}" marked as completed in database.`);
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const filtered = followups.filter((f) => {
@@ -77,120 +80,157 @@ export default function AdminFollowupsPage() {
   });
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold tracking-tight text-text-primary">
-            Scheduled Follow-ups & Reminders
-          </h1>
-          <p className="text-xs text-text-muted mt-1">
-            Track upcoming sales calls, overdue actions, and customer appointment schedules.
-          </p>
-        </div>
+    <AdminPageContainer>
+      <PageHeader
+        title="Scheduled Follow-ups & Callback Queue"
+        description="Track upcoming sales calls, overdue callback reminders, and customer appointment schedules."
+        actions={
+          <FilterTabs
+            tabs={[
+              { id: 'all', label: `All (${followups.length})` },
+              {
+                id: 'due_today',
+                label: `Due Today (${followups.filter((f) => f.status === 'due_today').length})`,
+              },
+              {
+                id: 'overdue',
+                label: `Overdue (${followups.filter((f) => f.status === 'overdue').length})`,
+              },
+              {
+                id: 'completed',
+                label: `Completed (${followups.filter((f) => f.status === 'completed').length})`,
+              },
+            ]}
+            activeTab={filter}
+            onTabChange={(id) => setFilter(id as any)}
+          />
+        }
+      />
 
-        <div className="flex items-center gap-1.5 bg-surface p-1 rounded-xl border border-border shadow-xs">
-          {[
-            { id: 'all', label: 'All' },
-            { id: 'due_today', label: 'Due Today' },
-            { id: 'overdue', label: 'Overdue' },
-            { id: 'completed', label: 'Completed' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setFilter(tab.id as any)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
-                filter === tab.id
-                  ? 'bg-primary-50 text-primary-700 border border-primary-200'
-                  : 'text-text-muted hover:text-text-primary'
-              }`}
+      {notice && <SuccessNotice message={notice} />}
+
+      {!loading && filtered.length === 0 ? (
+        <PageCard className="text-center py-14">
+          <Clock className="w-10 h-10 text-text-muted/40 mx-auto mb-3" />
+          <p className="text-[15px] font-bold text-text-primary">
+            No follow-ups in this filter view
+          </p>
+          <p className="text-[13px] text-text-muted mt-1">
+            Schedule a follow-up from any lead detail page to receive callback reminders here.
+          </p>
+        </PageCard>
+      ) : (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3" style={{ gap: '20px' }}>
+          {filtered.map((item) => (
+            <PageCard
+              key={item.id}
+              hover
+              className="flex flex-col justify-between min-h-[220px]"
+              style={{
+                borderTop: `3.5px solid ${
+                  item.status === 'overdue'
+                    ? '#EF4444'
+                    : item.status === 'due_today'
+                    ? '#F59E0B'
+                    : item.status === 'completed'
+                    ? '#10B981'
+                    : '#8B5CF6'
+                }`,
+              }}
             >
-              {tab.label}
-            </button>
+              <div>
+                <div className="flex items-center justify-between mb-3" style={{ gap: '8px' }}>
+                  <span
+                    className="text-[12.5px] font-semibold text-primary-700 bg-primary-50 rounded-full flex items-center border border-primary-200"
+                    style={{ padding: '4px 12px', gap: '6px' }}
+                  >
+                    <Calendar className="w-3.5 h-3.5 text-primary-600 shrink-0" />
+                    {formatDateTime(item.time)}
+                  </span>
+
+                  {item.status === 'overdue' && (
+                    <span
+                      className="text-[11.5px] font-bold text-danger bg-danger-bg rounded-full border border-danger/30"
+                      style={{ padding: '3px 10px' }}
+                    >
+                      Overdue
+                    </span>
+                  )}
+                  {item.status === 'due_today' && (
+                    <span
+                      className="text-[11.5px] font-bold text-warning bg-warning-bg rounded-full border border-warning/30"
+                      style={{ padding: '3px 10px' }}
+                    >
+                      Due Today
+                    </span>
+                  )}
+                  {item.status === 'completed' && (
+                    <span
+                      className="text-[11.5px] font-bold text-success bg-success-bg rounded-full border border-success/30"
+                      style={{ padding: '3px 10px' }}
+                    >
+                      Completed
+                    </span>
+                  )}
+                </div>
+
+                <h3 className="text-[15.5px] font-bold text-text-primary mt-2">
+                  {item.businessName}
+                </h3>
+                <p className="text-[13px] text-text-secondary mt-1 font-medium">
+                  {item.contact} • {item.phone}
+                </p>
+
+                <div
+                  className="mt-3 rounded-xl bg-[#F8FAFB] border border-border-light text-[13px] text-text-secondary italic"
+                  style={{ padding: '12px' }}
+                >
+                  &ldquo;{item.purpose}&rdquo;
+                </div>
+
+                <div className="mt-3 flex items-center text-[12px] text-text-muted" style={{ gap: '6px' }}>
+                  <User className="w-3.5 h-3.5 text-text-muted" />
+                  <span>Assigned: {item.assignedTo}</span>
+                </div>
+              </div>
+
+              <div
+                className="border-t border-border-light flex items-center justify-between"
+                style={{ marginTop: '18px', paddingTop: '14px' }}
+              >
+                <a
+                  href={`tel:${item.phone.replace(/\s/g, '')}`}
+                  className="inline-flex items-center rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-[13px] font-semibold shadow-xs transition-colors"
+                  style={{ padding: '7px 14px', gap: '6px' }}
+                >
+                  <Phone className="w-3.5 h-3.5" />
+                  <span>Call Client</span>
+                </a>
+
+                <div className="flex items-center" style={{ gap: '8px' }}>
+                  {item.status !== 'completed' && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => markCompleted(item.id, item.businessName)}
+                      className="text-success hover:bg-success-bg border-success/30"
+                    >
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Done</span>
+                    </Button>
+                  )}
+                  <Link
+                    href={`/admin/leads/${item.leadId}`}
+                    className="p-2 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-muted"
+                  >
+                    <ArrowRight className="w-4 h-4" />
+                  </Link>
+                </div>
+              </div>
+            </PageCard>
           ))}
         </div>
-      </div>
-
-      {/* Grid of followups */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {filtered.map((item) => (
-          <div
-            key={item.id}
-            className="p-5 rounded-2xl bg-surface border border-border shadow-xs hover:border-primary-200 transition-all flex flex-col justify-between"
-          >
-            <div>
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-[11px] font-semibold text-primary-700 bg-primary-50 px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                  <Calendar className="w-3 h-3 text-primary-600" />
-                  {formatDateTime(item.time)}
-                </span>
-
-                {item.status === 'overdue' && (
-                  <span className="text-[10px] font-bold text-danger bg-danger-bg px-2 py-0.5 rounded-full">
-                    Overdue
-                  </span>
-                )}
-                {item.status === 'due_today' && (
-                  <span className="text-[10px] font-bold text-warning bg-warning-bg px-2 py-0.5 rounded-full">
-                    Due Today
-                  </span>
-                )}
-                {item.status === 'completed' && (
-                  <span className="text-[10px] font-bold text-success bg-success-bg px-2 py-0.5 rounded-full">
-                    Completed
-                  </span>
-                )}
-              </div>
-
-              <h3 className="text-sm font-bold text-text-primary mt-1">
-                {item.businessName}
-              </h3>
-              <p className="text-xs text-text-secondary mt-0.5">
-                {item.contact} • {item.phone}
-              </p>
-
-              <div className="mt-3 p-3 rounded-xl bg-surface-muted/60 border border-border-light text-xs text-text-secondary italic">
-                &ldquo;{item.purpose}&rdquo;
-              </div>
-
-              <div className="mt-3 flex items-center gap-1.5 text-[11px] text-text-muted">
-                <User className="w-3.5 h-3.5 text-text-muted" />
-                <span>Assigned: {item.assignedTo}</span>
-              </div>
-            </div>
-
-            <div className="mt-5 pt-3 border-t border-border-light flex items-center justify-between">
-              <a
-                href={`tel:${item.phone.replace(/\s/g, '')}`}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-primary-600 hover:bg-primary-700 text-white text-xs font-semibold shadow-xs transition-colors"
-              >
-                <Phone className="w-3.5 h-3.5" />
-                <span>Call Client</span>
-              </a>
-
-              <div className="flex items-center gap-2">
-                {item.status !== 'completed' && (
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => markCompleted(item.id)}
-                    className="text-xs h-8 text-success hover:bg-success-bg border-success/30"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5 mr-1" />
-                    <span>Done</span>
-                  </Button>
-                )}
-                <Link
-                  href={`/admin/leads/${item.leadId}`}
-                  className="p-1.5 rounded-lg text-text-muted hover:text-text-primary hover:bg-surface-muted"
-                >
-                  <ArrowRight className="w-4 h-4" />
-                </Link>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
+      )}
+    </AdminPageContainer>
   );
 }

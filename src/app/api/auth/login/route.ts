@@ -146,15 +146,24 @@ export async function POST(request: NextRequest) {
       redirectTo = '/change-password';
     }
 
+    const userPayload = {
+      id: authData.user.id,
+      role: userRole,
+      fullName: userProfile?.full_name || 'Administrator',
+      employeeId: userProfile?.employee_id || 'ADM001',
+      email: emailToAuth,
+      is_active: userProfile?.is_active ?? true,
+    };
+
+    cookieStore.set('crm_profile', encodeURIComponent(JSON.stringify(userPayload)), {
+      path: '/',
+      maxAge: 60 * 60 * 12,
+      sameSite: 'lax',
+    });
+
     return NextResponse.json({
       success: true,
-      user: {
-        id: authData.user.id,
-        role: userRole,
-        fullName: userProfile?.full_name,
-        employeeId: userProfile?.employee_id,
-        email: emailToAuth,
-      },
+      user: userPayload,
       redirectTo,
     });
   } catch (error: any) {
