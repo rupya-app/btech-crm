@@ -286,7 +286,7 @@ export async function getLeadStatusCounts(employeeId?: string): Promise<LeadStat
     try {
       const supabase = await getDbClient();
 
-      const [allLeads, allAssigns] = await Promise.all([
+      const [allLeads, allAssigns, activeProfiles] = await Promise.all([
         fetchAllRows<any>((from, to) =>
           supabase.from('leads').select('id, status').range(from, to)
         ),
@@ -297,9 +297,12 @@ export async function getLeadStatusCounts(employeeId?: string): Promise<LeadStat
             .eq('is_active', true)
             .range(from, to)
         ),
+        supabase.from('profiles').select('id').eq('is_active', true),
       ]);
 
-      const allAssignedSet = new Set(allAssigns.map((a: any) => a.lead_id));
+      const activeEmpSet = new Set((activeProfiles.data || []).map((p: any) => p.id));
+      const validAssigns = allAssigns.filter((a: any) => activeEmpSet.has(a.employee_id));
+      const allAssignedSet = new Set(validAssigns.map((a: any) => a.lead_id));
       counts.unassigned = allLeads.filter(
         (l: any) =>
           !allAssignedSet.has(l.id) &&
@@ -309,7 +312,7 @@ export async function getLeadStatusCounts(employeeId?: string): Promise<LeadStat
 
       if (employeeId) {
         const empLeadIds = new Set(
-          allAssigns
+          validAssigns
             .filter((a: any) => a.employee_id === employeeId)
             .map((a: any) => a.lead_id)
         );

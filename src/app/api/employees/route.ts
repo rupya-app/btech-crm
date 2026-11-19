@@ -326,32 +326,29 @@ export async function PATCH(request: NextRequest) {
     // - Preserves 100% of historical assignments, activities, calls, remarks, and daily work logs
     // - Permanently locks the account from ever being reactivated
     if (targetStatus === 'deactivated') {
-      const activeAssigns = await fetchAllRows<any>((from, to) =>
-        adminClient
-          .from('lead_assignments')
-          .select('id, lead_id')
-          .eq('employee_id', id)
-          .eq('is_active', true)
-          .range(from, to)
-      );
-
-      const leadIdsToRevert = activeAssigns.map((a: any) => a.lead_id);
       const nowIso = new Date().toISOString();
+
+      // Atomically mark ALL active assignments for this employee as inactive and released
+      const { data: revertedRows, error: revertErr } = await adminClient
+        .from('lead_assignments')
+        .update({
+          is_active: false,
+          released_at: nowIso,
+        })
+        .eq('employee_id', id)
+        .eq('is_active', true)
+        .select('lead_id');
+
+      if (revertErr) {
+        console.error('Error reverting lead assignments on deactivation:', revertErr);
+      }
+
+      const leadIdsToRevert = (revertedRows || []).map((r: any) => r.lead_id);
 
       if (leadIdsToRevert.length > 0) {
         const CHUNK_SIZE = 250;
         for (let i = 0; i < leadIdsToRevert.length; i += CHUNK_SIZE) {
           const chunk = leadIdsToRevert.slice(i, i + CHUNK_SIZE);
-          await adminClient
-            .from('lead_assignments')
-            .update({
-              is_active: false,
-              released_at: nowIso,
-            })
-            .eq('employee_id', id)
-            .eq('is_active', true)
-            .in('lead_id', chunk);
-
           const revertActivities = chunk.map((lId: string) => ({
             lead_id: lId,
             employee_id: id,

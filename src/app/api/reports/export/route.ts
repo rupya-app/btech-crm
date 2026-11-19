@@ -82,13 +82,13 @@ export async function POST(request: NextRequest) {
         query,
         supabase
           .from('lead_assignments')
-          .select('lead_id, employee:profiles(full_name, employee_id)')
+          .select('lead_id, employee:profiles(full_name, employee_id, is_active)')
           .eq('is_active', true),
       ]);
 
       const assignMap = new Map<string, string>();
       (activeAssigns || []).forEach((a: any) => {
-        if (a.employee) {
+        if (a.employee && a.employee.is_active !== false) {
           assignMap.set(a.lead_id, `${a.employee.full_name} (${a.employee.employee_id})`);
         }
       });

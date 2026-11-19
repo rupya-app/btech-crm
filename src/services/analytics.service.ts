@@ -38,14 +38,14 @@ export async function getAdminKPIs(): Promise<AdminKPIs> {
     const [
       { data: allLeads },
       { data: activeAssignments },
-      { count: employeesCount },
+      { data: activeProfiles },
       { data: activeFollowUps },
     ] = await Promise.all([
       supabase.from('leads').select('id, status'),
-      supabase.from('lead_assignments').select('lead_id').eq('is_active', true),
+      supabase.from('lead_assignments').select('lead_id, employee_id').eq('is_active', true),
       supabase
         .from('profiles')
-        .select('*', { count: 'exact', head: true })
+        .select('id')
         .eq('role', 'employee')
         .eq('is_active', true),
       supabase
@@ -55,8 +55,12 @@ export async function getAdminKPIs(): Promise<AdminKPIs> {
         .neq('status', 'cancelled'),
     ]);
 
+    const activeEmpSet = new Set((activeProfiles || []).map((p: any) => p.id));
+    const validAssigns = (activeAssignments || []).filter((a: any) => activeEmpSet.has(a.employee_id));
+    const employeesCount = activeProfiles?.length || 0;
+
     const leads = allLeads || [];
-    const assignedSet = new Set((activeAssignments || []).map((a: any) => a.lead_id));
+    const assignedSet = new Set(validAssigns.map((a: any) => a.lead_id));
 
     const totalLeads = leads.length;
     const assignedLeads = leads.filter((l: any) => assignedSet.has(l.id)).length;

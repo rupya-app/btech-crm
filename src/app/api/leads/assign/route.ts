@@ -35,7 +35,24 @@ export async function GET() {
       supabase.from('lead_activities').select('employee_id, activity_type, call_outcome'),
     ]);
 
-    const assignedLeadIds = new Set(activeAssignments.map((a: any) => a.lead_id));
+    const activeEmpIdSet = new Set((employees || []).map((e: any) => e.id));
+    const validActiveAssigns = activeAssignments.filter((a: any) => activeEmpIdSet.has(a.employee_id));
+
+    // Self-healing: Automatically release any assignments left with inactive or deactivated employees
+    const staleAssigns = activeAssignments.filter((a: any) => !activeEmpIdSet.has(a.employee_id));
+    if (staleAssigns.length > 0) {
+      const staleEmpIds = Array.from(new Set(staleAssigns.map((a: any) => a.employee_id)));
+      for (const sEmpId of staleEmpIds) {
+        supabase
+          .from('lead_assignments')
+          .update({ is_active: false, released_at: new Date().toISOString() })
+          .eq('employee_id', sEmpId)
+          .eq('is_active', true)
+          .then(() => {});
+      }
+    }
+
+    const assignedLeadIds = new Set(validActiveAssigns.map((a: any) => a.lead_id));
     const unassignedLeads = allLeads.filter(
       (l: any) => !assignedLeadIds.has(l.id) && l.status !== 'archived' && l.status !== 'unqualified'
     );
@@ -44,7 +61,7 @@ export async function GET() {
     allLeads.forEach((l: any) => leadStatusMap.set(l.id, l.status));
 
     const reps = (employees || []).map((emp: any) => {
-      const empAssigns = activeAssignments.filter((a: any) => a.employee_id === emp.id);
+      const empAssigns = validActiveAssigns.filter((a: any) => a.employee_id === emp.id);
       const activeCount = empAssigns.length;
       const confirmedCount = empAssigns.filter(
         (a: any) => leadStatusMap.get(a.lead_id) === 'confirmed'
@@ -152,17 +169,38 @@ export async function POST(request: NextRequest) {
       }),
     ]);
 
-    // Set of all lead IDs that are ALREADY assigned to any sales person
+    const activeEmpIdSet = new Set((employees || []).map((e: any) => e.id));
+
+    // Release any stale assignments from deactivated employees so the database unique index won't collide
+    const staleLeadIds = activeAssignments
+      .filter((a: any) => !activeEmpIdSet.has(a.employee_id))
+      .map((a: any) => a.lead_id);
+
+    if (staleLeadIds.length > 0) {
+      const CHUNK_SIZE = 250;
+      for (let i = 0; i < staleLeadIds.length; i += CHUNK_SIZE) {
+        const chunk = staleLeadIds.slice(i, i + CHUNK_SIZE);
+        await supabase
+          .from('lead_assignments')
+          .update({ is_active: false, released_at: new Date().toISOString() })
+          .in('lead_id', chunk);
+      }
+    }
+
+    // Only leads assigned to CURRENTLY ACTIVE employees count as assigned
+    const validActiveAssigns = activeAssignments.filter((a: any) => activeEmpIdSet.has(a.employee_id));
+
+    // Set of all lead IDs that are ALREADY assigned to an active sales person
     const assignedLeadIdSet = new Set<string>(
-      activeAssignments.map((a: any) => a.lead_id)
+      validActiveAssigns.map((a: any) => a.lead_id)
     );
 
-    // Map lead_id -> normalized_phone and build set of phones already assigned to a sales rep
+    // Map lead_id -> normalized_phone and build set of phones already assigned to an active sales rep
     const leadById = new Map<string, any>();
     allLeads.forEach((l: any) => leadById.set(l.id, l));
 
     const assignedPhoneSet = new Set<string>();
-    activeAssignments.forEach((a: any) => {
+    validActiveAssigns.forEach((a: any) => {
       const l = leadById.get(a.lead_id);
       const phoneKey = l?.normalized_phone || l?.phone;
       if (phoneKey) assignedPhoneSet.add(String(phoneKey).trim());
